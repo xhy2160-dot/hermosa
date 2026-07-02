@@ -25,7 +25,7 @@ app.use(cors({
     credentials: true
 }));
 
-
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(authenticate);
 // Mount your routes under a specific base path
 app.use('/api/auth', authRoutes);
