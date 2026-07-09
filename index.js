@@ -15,6 +15,7 @@ import authRoutes from './routes/auth.js';
 import staffRoutes from './routes/staff.js';
 import customersRoutes from './routes/customers.js';
 import treatmentRoutes from './routes/treatment.js';
+import roomRoutes from './routes/rooms.js'; // Import the rooms router
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/treatment', treatmentRoutes);
+app.use('/api/rooms', roomRoutes); // Mount the rooms route
 
 
 app.listen(3000, () => console.log('Server running cleanly on port 3000'));

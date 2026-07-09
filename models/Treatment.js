@@ -20,9 +20,17 @@ export default (sequelize) => {
             type: DataTypes.DATEONLY,
             allowNull: true,
         },
-        time: {
+        start_time: {
             type: DataTypes.TIME,
-            allowNull: true
+            allowNull: false, // 或者根据你原来的配置决定
+            comment: '开始时间'
+        },
+
+        // 💡 2. 新增 end_time 字段
+        end_time: {
+            type: DataTypes.TIME,
+            allowNull: true,
+            comment: '结束时间'
         },
         customer_id: {
             type: DataTypes.INTEGER,
@@ -31,6 +39,11 @@ export default (sequelize) => {
         staff_id: { // ✅ Changed from staff_name to a proper relational foreign key
             type: DataTypes.INTEGER,
             allowNull: false,
+        },
+        room_id: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            comment: '关联的空间/房间ID'
         },
         location: {
             type: DataTypes.STRING(200),
@@ -100,6 +113,11 @@ export default (sequelize) => {
         Treatment.belongsTo(models.Staff, {
             foreignKey: 'staff_id',
             as: 'staff'
+        });
+
+        Treatment.belongsTo(models.Room, {
+            foreignKey: 'room_id',
+            as: 'room'
         });
     };
 
