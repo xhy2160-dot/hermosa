@@ -16,109 +16,48 @@ export default (sequelize) => {
                 notEmpty: { msg: 'Treatment name is required' }
             }
         },
-        date: {
-            type: DataTypes.DATEONLY,
-            allowNull: true,
-        },
-        start_time: {
-            type: DataTypes.TIME,
-            allowNull: false, // 或者根据你原来的配置决定
-            comment: '开始时间'
-        },
-
-        // 💡 2. 新增 end_time 字段
-        end_time: {
-            type: DataTypes.TIME,
-            allowNull: true,
-            comment: '结束时间'
-        },
-        customer_id: {
-            type: DataTypes.INTEGER,
-            allowNull: false,
-        },
-        staff_id: { // ✅ Changed from staff_name to a proper relational foreign key
-            type: DataTypes.INTEGER,
-            allowNull: false,
-        },
-        room_id: {
-            type: DataTypes.INTEGER,
-            allowNull: true,
-            comment: '关联的空间/房间ID'
-        },
-        location: {
-            type: DataTypes.STRING(200),
-            allowNull: true,
-        },
-        payment: {
-            type: DataTypes.STRING(250),
-            allowNull: true,
-        },
-        payment_date: {
-            type: DataTypes.DATEONLY,
-            allowNull: true
-        },
-        amount: {
+        total: {
             type: DataTypes.DECIMAL(10, 2),
-            allowNull: true,
-            defaultValue: 0.00
+            allowNull: false,
+            defaultValue: 0.00,
+            comment: '总金额'
         },
         balance: {
             type: DataTypes.DECIMAL(10, 2),
-            allowNull: true,
+            allowNull: false,
             defaultValue: 0.00,
+            comment: '未付尾款/余额'
+        },
+        added_by: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            comment: '创建该记录的操作员ID'
         },
         remark: {
             type: DataTypes.TEXT,
             allowNull: true
-        },
-        status: {
-            type: DataTypes.ENUM('in-progress', 'completed', 'cancelled', 'no-show'),
-            allowNull: true,
-            defaultValue: 'in-progress'
-        },
-        reminder_sent: {
-            type: DataTypes.BOOLEAN,
-            allowNull: true,
-            defaultValue: false,
-            field: 'reminder_sent'
-        },
-        reminder_sent_at: {
-            type: DataTypes.DATE,
-            allowNull: true,
-            field: 'reminder_sent_at'
         }
     }, {
         timestamps: true,
         tableName: 'treatments',
+        // 💡 显式声明下划线物理列名，对应 Sequelize 的自动时间戳
         createdAt: 'created_at',
         updatedAt: 'updated_at',
         indexes: [
-            { fields: ['customer_id'] },
-            { fields: ['date'] },
-            { fields: ['status'] },
-            { fields: ['staff_id'] }, // ✅ Updated index target from staff_name to staff_id
-            { fields: ['location'] },
-            { fields: ['date', 'time'] }
+            // 💡 清理了所有失效字段的索引，仅为操作员审计和高频财务查询保留基础索引
+            { fields: ['added_by'] }
         ]
     });
 
     Treatment.associate = (models) => {
-        // Customer Association
-        Treatment.belongsTo(models.Customer, {
-            foreignKey: 'customer_id',
-            as: 'customer'
-        });
-
-        // ✅ New Staff Association
-        Treatment.belongsTo(models.Staff, {
-            foreignKey: 'staff_id',
-            as: 'staff'
-        });
-
-        Treatment.belongsTo(models.Room, {
-            foreignKey: 'room_id',
-            as: 'room'
-        });
+        // 💡 建立 added_by 与 Staff 模型的属于(belongsTo)关系
+        // 这样后续你可以直接通过 include: ['creator'] 查出是谁创建的单子
+        if (models.Staff) {
+            Treatment.belongsTo(models.Staff, {
+                foreignKey: 'added_by',
+                as: 'creator'
+            });
+        }
     };
 
     return Treatment;
