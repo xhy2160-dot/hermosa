@@ -3,6 +3,7 @@ import express from 'express';
 import db from '../models/index.js';
 const { Staff } = db;
 import bcrypt from 'bcryptjs';
+import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
 
 const router = express.Router();
 
@@ -48,13 +49,14 @@ router.post('/add', async (req, res) => {
         });
 
         if (existingStaff) {
-            return res.status(409).json({
-                success: false,
-                message: 'Email already registered. Please use a different email address.',
-                code: 'EMAIL_EXISTS'
-            });
+            return res.fail('Email already registered. Please use a different email address.', 409)
         }
 
+        const normalizedPhone = phone ? formatNAPhoneNumber(phone) : null;
+
+        if (!normalizedPhone) {
+            return res.fail('Invalid phone number format!', 409)
+        }
 
         // ✅ Hash password before saving
         const saltRounds = 10;
@@ -64,7 +66,7 @@ router.post('/add', async (req, res) => {
         const newStaff = await Staff.create({
             name: name.trim(),
             email: email.toLowerCase().trim(),
-            phone: phone ? phone.trim() : null,
+            phone: normalizedPhone,
             password: hashedPassword,
             role: role || 'staff',
         });
@@ -73,52 +75,22 @@ router.post('/add', async (req, res) => {
         const staffResponse = newStaff.toJSON();
         delete staffResponse.password;
 
-        res.status(201).json({
-            success: true,
-            message: 'Staff member added successfully',
-            data: staffResponse
-        });
+        res.success(staffResponse, 'Staff member added successfully', 201)
 
     } catch (error) {
-        console.error('Error adding staff:', error);
-
-        // ✅ Handle specific Sequelize errors
-        if (error.name === 'SequelizeUniqueConstraintError') {
-            return res.status(409).json({
-                success: false,
-                message: 'Email or phone already exists',
-                code: 'DUPLICATE_ENTRY'
-            });
-        }
-
-        if (error.name === 'SequelizeValidationError') {
-            return res.status(400).json({
-                success: false,
-                message: error.errors.map(e => e.message).join(', '),
-                code: 'VALIDATION_ERROR'
-            });
-        }
-
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error',
-            code: 'SERVER_ERROR'
-        });
+        console.error('Error adding staff:', error)
+        return res.fail('Internal server error', 500)
     }
 });
 
 router.post('/update', async (req, res) => {
-    console.log('Update request body:', req.body); // Log the request body for debugging
     try {
         const { id, name, email, phone, role, status, password } = req.body;
 
         // ✅ Find the staff member by ID
         const staffMember = await Staff.findByPk(id);
         if (!staffMember) {
-            return res.status(404).json({
-                success: false,
-                message: 'Staff member not found'
-            });
+            return res.fail('Staff member not found', 404)
         }
 
         // ✅ Check if email is being updated and if it already exists
@@ -127,19 +99,21 @@ router.post('/update', async (req, res) => {
                 where: { email: email.toLowerCase().trim() }
             });
             if (existingStaff) {
-                return res.status(409).json({
-                    success: false,
-                    message: 'Email already registered. Please use a different email address.',
-                    code: 'EMAIL_EXISTS'
-                });
+                return res.fail('Email already registered. Please use a different email address', 409)
             }
+        }
+
+        const normalizedPhone = phone ? formatNAPhoneNumber(phone) : null;
+
+        if (!normalizedPhone) {
+            return res.fail('Invalid phone number format!', 409)
         }
 
         // ✅ Update the staff member
         await staffMember.update({
             name: name ? name.trim() : staffMember.name,
             email: email ? email.toLowerCase().trim() : staffMember.email,
-            phone: phone ? phone.trim() : staffMember.phone,
+            phone: normalizedPhone,
             role: role || staffMember.role,
             status: status !== undefined ? status : staffMember.status,
             password: password ? await bcrypt.hash(password, 10) : staffMember.password
@@ -149,37 +123,11 @@ router.post('/update', async (req, res) => {
         const updatedStaff = staffMember.toJSON();
         delete updatedStaff.password;
 
-        res.status(200).json({
-            success: true,
-            message: 'Staff member updated successfully',
-            data: updatedStaff
-        });
+        res.success(updatedStaff, 'Staff member updated successfully', 200)
 
     } catch (error) {
         console.error('Error updating staff:', error);
-
-        // ✅ Handle specific Sequelize errors
-        if (error.name === 'SequelizeUniqueConstraintError') {
-            return res.status(409).json({
-                success: false,
-                message: 'Email or phone already exists',
-                code: 'DUPLICATE_ENTRY'
-            });
-        }
-
-        if (error.name === 'SequelizeValidationError') {
-            return res.status(400).json({
-                success: false,
-                message: error.errors.map(e => e.message).join(', '),
-                code: 'VALIDATION_ERROR'
-            });
-        }
-
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error',
-            code: 'SERVER_ERROR'
-        });
+        return res.fail('Internal server error', 500)
     }
 });
 

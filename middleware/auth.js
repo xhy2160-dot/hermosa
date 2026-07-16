@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { authConfig } from '../config/auth.js';
 
 // Resolve your secret key safely from environment variables
-const JWT_SECRET = 'foewvao9849anfoiqnaocwAA';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Check if route is public
 const isPublicRoute = (url) => {

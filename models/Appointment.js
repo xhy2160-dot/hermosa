@@ -60,11 +60,15 @@ export default (sequelize) => {
             allowNull: true,
             comment: '备注信息'
         },
-        reminder_sent: {
+        reminder_24h_sent: {
             type: DataTypes.DATE,
             allowNull: true,
-            defaultValue: null,
-            comment: '提醒发送时间，未发送则为 null'
+            defaultValue: null
+        },
+        reminder_1h_sent: {
+            type: DataTypes.DATE,
+            allowNull: true,
+            defaultValue: null
         },
         status: {
             type: DataTypes.ENUM('scheduled', 'completed', 'cancelled', 'no-show'),

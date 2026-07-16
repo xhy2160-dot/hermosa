@@ -2,35 +2,44 @@ import Surge from '@surgeapi/node';
 import { Op } from 'sequelize';
 import sequelize from '../db.js';
 import db from '../models/index.js';
+import { getReminderMessage } from '../utils/translations.js';
 const { Customer, Treatment, Appointment } = db;
 
 const client = new Surge({
-    apiKey: process.env['SURGE_API_KEY'], // This is the default and can be omitted
+    apiKey: process.env['SURGE_API_KEY'],
 });
 
+const toLocalSQLString = (date) => {
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+        `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
 export const sendAppointmentReminders = async () => {
+    console.log('Local Time:', new Date().toString());
+
     console.log('⏰ Starting appointment reminder check...');
 
-    // Define our 24-hour window starting from right now
     const now = new Date();
-    const twentyFourHoursFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    // We grab appointments up to 25 hours out to cover the 24h window comfortably
+    const maxWindow = new Date(now.getTime() + 25 * 60 * 60 * 1000);
 
-    const startWindow = now.toISOString().slice(0, 19).replace('T', ' ');
-    const endWindow = twentyFourHoursFromNow.toISOString().slice(0, 19).replace('T', ' ');
+    const startString = toLocalSQLString(now)
+    console.log('Database Start Window Variable:', startString);
+    const endString = toLocalSQLString(maxWindow)
 
     try {
-        // 1. Query appointments using nested eager loading: Appointment -> Treatment -> Customer
+        // 1. Grab scheduled appointments in our target timeframe
         const appointments = await Appointment.findAll({
             where: {
-                reminder_sent: null,
                 status: 'scheduled',
-
-                // 2. Combine date + start_time and evaluate if it falls inside our window
                 [Op.and]: [
-                    sequelize.literal(`CONCAT(date, ' ', start_time) >= '${startWindow}'`),
-                    sequelize.literal(`CONCAT(date, ' ', start_time) <= '${endWindow}'`)
+                    sequelize.literal(`CONCAT(date, ' ', start_time) >= :startWindow`),
+                    sequelize.literal(`CONCAT(date, ' ', start_time) <= :endWindow`)
                 ]
             },
+            // Secure bind parameters to prevent SQL injection vulnerabilities
+            replacements: { startWindow: startString, endWindow: endString },
             include: [
                 {
                     model: Treatment,
@@ -47,63 +56,102 @@ export const sendAppointmentReminders = async () => {
             ]
         });
 
-        console.log(appointments)
-
         if (appointments.length === 0) {
-            console.log('✅ No pending 24-hour reminders found.');
+            console.log('✅ No upcoming scheduled appointments in the queue.');
             return;
         }
 
-        console.log(`✉️ Found ${appointments.length} appointments to remind.`);
-
-        // 2. Map and process SMS tasks asynchronously
         const smsPromises = appointments.map(async (appointment) => {
-            const { start_time, id, treatment, date } = appointment;
+            const { start_time, id, treatment, date, reminder_24h_sent, reminder_1h_sent } = appointment;
             const customer = treatment?.customer;
 
-            // Guard against missing customer or phone data
+            // Guard against missing customer, phone, or opt-out settings
             if (!customer || !customer.phone) {
                 console.warn(`⚠️ Skipping Appt ID ${id}: Missing customer details or phone number.`);
                 return;
             }
 
-            // Format the appointment time nicely (e.g., "02:30 PM")
-            const formattedTime = new Date(start_time).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit'
-            });
+            const reminderType = customer.reminder_type;
+            if (!reminderType || reminderType === 'none') {
+                return; // Customer does not want reminders
+            }
 
-            const messageBody = `Hi ${customer.name}, this is a reminder for your appointment at Hermosa Medspa on ${date} at ${start_time}. Reply STOP to opt out.`;
-            // const messageBody = `hello 提醒下明天 12:30 north york location 的 picoway 預約。`;
+            // Calculate precise timing
+            const appointmentTime = new Date(`${date}T${start_time}`);
+            const timeDiffMs = appointmentTime - now;
+            const diffInHours = timeDiffMs / (1000 * 60 * 60);
+            const diffInMinutes = timeDiffMs / (1000 * 60);
+
+            // Determine which reminder needs sending
+            let is24hTrigger = false;
+            let is1hTrigger = false;
+
+            // --- Evaluation 1: Should we send the 24-hour reminder? ---
+            const wants24h = reminderType === '24 hour' || reminderType === 'both';
+            if (wants24h && !reminder_24h_sent && diffInHours > 0 && diffInHours <= 24.5) {
+                is24hTrigger = true;
+            }
+
+            // --- Evaluation 2: Should we send the 1-hour reminder? ---
+            const wants1h = reminderType === '1 hour' || reminderType === 'both';
+            // Trigger 1 hour prior if the 24h reminder isn't hogging this window
+            if (wants1h && !reminder_1h_sent && diffInMinutes > 0 && diffInMinutes <= 75) {
+                is1hTrigger = true;
+            }
+
+            // Skip if no active triggers apply to this run
+            if (!is24hTrigger && !is1hTrigger) {
+                return;
+            }
+
+            const activeTriggerType = is24hTrigger ? '24-hour' : '1-hour';
+
+            // Resolve contact info safely with fallbacks
+            const spaPhone = process.env.MED_SPA_PHONE || '+1 (226) 503-8015';
+            const spaEmail = process.env.MED_SPA_EMAIL || 'info@hermosamedspa.com';
+
+            // 💡 Dynamically resolve the multilingual translation based on customer preference
+            const messageBody = getReminderMessage(
+                customer.language, // e.g. 'en', 'zh-cn', 'zh-tw', 'ko'
+                customer.name,
+                activeTriggerType,
+                date,
+                start_time,
+                spaPhone,
+                spaEmail
+            );
+
             try {
-                // Send the SMS via Surge using dynamic values
+                // Send the SMS dynamically using customer's real phone number
                 const smsResponse = await client.messages.create('acct_01kxgbx3aae0pt946967rn9hkf', {
-                    body: messageBody, // Sends the dynamic reminder text
+                    body: messageBody,
                     conversation: {
                         contact: {
-                            phone_number: '+12265038015' // Dynamic E.164 phone number
+                            phone_number: customer.phone
                         }
                     }
                 });
 
-                // 3. Mark as sent in the database so we never remind them twice
-                appointment.reminder_sent = new Date();
-                await appointment.save();
+                // Update the specific tracking timestamp in database
+                if (is24hTrigger) {
+                    appointment.reminder_24h_sent = new Date();
+                } else if (is1hTrigger) {
+                    appointment.reminder_1h_sent = new Date();
+                }
 
-                console.log(smsResponse);
+                await appointment.save();
+                console.log(`✉️ Successful ${activeTriggerType} SMS (${customer.language}) sent to ${customer.name} (${customer.phone})`);
 
             } catch (smsError) {
-                console.error(`❌ Failed to send SMS to ${customer.name}-${customer.phone} (Appt ID: ${id}):`, smsError.message);
+                console.error(`❌ Failed to send ${activeTriggerType} SMS to ${customer.name} (Appt ID: ${id}):`, smsError.message);
             }
         });
 
-        // Wait for all messages in this batch to resolve (or fail)
+        // Resolve all tasks concurrently 
         await Promise.allSettled(smsPromises);
-        console.log('🎉 Reminder task finished.');
+        console.log('🎉 Reminder processing batch finished.');
 
     } catch (dbError) {
         console.error('❌ Database query or reminder process failed:', dbError);
     }
 };
-
-

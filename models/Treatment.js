@@ -35,6 +35,11 @@ export default (sequelize) => {
             defaultValue: 0.00,
             comment: '未付尾款/余额'
         },
+        total_sessions: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            defaultValue: 1
+        },
         added_by: {
             type: DataTypes.INTEGER,
             allowNull: true,
