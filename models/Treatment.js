@@ -9,6 +9,13 @@ export default (sequelize) => {
             primaryKey: true,
             allowNull: false
         },
+        customer_id: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            validate: {
+                notNull: { msg: 'Customer ID is required' }
+            }
+        },
         name: {
             type: DataTypes.STRING(250),
             allowNull: false,
@@ -36,6 +43,11 @@ export default (sequelize) => {
         remark: {
             type: DataTypes.TEXT,
             allowNull: true
+        },
+        status: {
+            type: DataTypes.ENUM('in-progress', 'completed', 'cancelled', 'no-show'),
+            allowNull: false,
+            defaultValue: 'in-progress'
         }
     }, {
         timestamps: true,
@@ -50,12 +62,28 @@ export default (sequelize) => {
     });
 
     Treatment.associate = (models) => {
-        // 💡 建立 added_by 与 Staff 模型的属于(belongsTo)关系
-        // 这样后续你可以直接通过 include: ['creator'] 查出是谁创建的单子
+        if (models.Customer) {
+            Treatment.belongsTo(models.Customer, {
+                foreignKey: 'customer_id',
+                as: 'customer' // 后端路由里包含时请使用 include: [{ model: Customer, as: 'customer' }]
+            });
+        }
         if (models.Staff) {
             Treatment.belongsTo(models.Staff, {
                 foreignKey: 'added_by',
-                as: 'creator'
+                as: 'staff',
+            });
+        }
+        if (models.Appointment) {
+            Treatment.hasMany(models.Appointment, {
+                foreignKey: 'treatment_id', // 确保这是 Appointment 表里的外键字段名
+                as: 'appointments',         // 对应你之前 include 里的别名
+            });
+        }
+        if (models.InstallPayment) {
+            Treatment.hasMany(models.InstallPayment, {
+                foreignKey: 'treatment_id',
+                as: 'payments', // 对应你在路由里 include 的别名
             });
         }
     };

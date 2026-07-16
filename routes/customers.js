@@ -4,6 +4,7 @@ import { Op } from 'sequelize';
 import db from '../models/index.js';
 const { Customer } = db;
 import { authenticate } from '../middleware/auth.js';
+import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
 
 const router = express.Router();
 
@@ -19,68 +20,142 @@ router.post('/add', authenticate, async (req, res) => {
             preferred_day,
             preferred_time,
             preferred_contact,
+            reminder,
+            language,
             notes
         } = req.body;
 
         // Validate required fields
         if (!name || !email || !phone) {
-            return res.status(400).json({
-                success: false,
-                message: 'Name, email, and phone are required'
-            });
+            return res.fail('Missing required fields: name, email, and phone are required', 400);
         }
 
-        // Check if email already exists
-        const existingEmail = await Customer.findOne({
-            where: { email: email.toLowerCase().trim() }
-        });
+        if (formatNAPhoneNumber(phone) === null) {
+            return res.fail('Invalid phone number format', 400);
+        }
 
-        if (existingEmail) {
-            return res.status(409).json({
-                success: false,
-                message: 'Customer with this email already exists'
+        const normalizedEmail = email ? email.toLowerCase().trim() : null;
+        const normalizedPhone = phone ? formatNAPhoneNumber(phone) : null;
+
+        // 2. Build dynamic OR query based on what values were provided
+        const searchCriteria = [];
+        if (normalizedEmail) searchCriteria.push({ email: normalizedEmail });
+        if (normalizedPhone) searchCriteria.push({ phone: normalizedPhone });
+
+        if (searchCriteria.length > 0) {
+            const existingCustomer = await Customer.findOne({
+                where: {
+                    [Op.or]: searchCriteria
+                }
             });
+
+            if (existingCustomer) {
+                // Determine exactly which field caused the collision for a better error message
+                const isEmailDup = normalizedEmail && existingCustomer.email === normalizedEmail;
+                const isPhoneDup = normalizedPhone && existingCustomer.phone === normalizedPhone;
+
+                let message = 'Customer already exists';
+                if (isEmailDup && isPhoneDup) message = 'Customer with this email and phone number already exists';
+                else if (isEmailDup) message = 'Customer with this email already exists';
+                else if (isPhoneDup) message = 'Customer with this phone number already exists';
+
+                return res.fail(message, 409);
+            }
         }
 
         // Create customer
         const customer = await Customer.create({
             name: name.trim(),
             email: email.toLowerCase().trim(),
-            phone: phone.trim(),
+            phone: normalizedPhone,
             preferred_location: preferred_location,
             preferred_doctor: preferred_doctor || null,
             preferred_day: preferred_day || null,
             preferred_time: preferred_time || null,
             preferred_contact: preferred_contact || 'email',
+            reminder_type: reminder || '24 hour',
+            language: language || 'EN',
             notes: notes || null,
             status: 'active'
         });
 
-        res.status(201).json({
-            success: true,
-            message: 'Customer created successfully',
-            data: customer
-        });
+        return res.success(customer, 'Customer created successfully', 201)
 
     } catch (error) {
         console.error('Error creating customer:', error);
-
-        if (error.name === 'SequelizeValidationError') {
-            return res.status(400).json({
-                success: false,
-                message: error.errors.map(e => e.message).join(', ')
-            });
-        }
-
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error'
-        });
+        res.fail('Internal server error', 500)
     }
 });
 // routes/customers.js
 
+// ✅ Update customer
+router.put('/update', authenticate, async (req, res) => {
+    try {
+        const {
+            id,
+            name,
+            email,
+            phone,
+            preferred_location,
+            preferred_doctor,
+            preferred_day,
+            preferred_time,
+            preferred_contact,
+            reminder,
+            language,
+            notes,
+            status
+        } = req.body;
 
+        const customer = await Customer.findByPk(id);
+
+        if (!customer) {
+            res.fail('Customer not found', 404)
+        }
+
+        // Check email uniqueness if email is being updated
+        if (email && email !== customer.email) {
+            const existingEmail = await Customer.findOne({
+                where: { email: email.toLowerCase().trim() }
+            });
+            if (existingEmail) {
+                res.fail('Email already in use', 404)
+            }
+        }
+
+        // Check phone uniqueness if phone is being updated
+        if (phone && phone !== customer.phone) {
+            const existingPhone = await Customer.findOne({
+                where: { phone: phone.trim() }
+            });
+            if (existingPhone) {
+                res.fail('Phone already in use', 404)
+            }
+        }
+
+        // Update customer
+        await customer.update({
+            name: name || customer.name,
+            email: email ? email.toLowerCase().trim() : customer.email,
+            phone: phone || customer.phone,
+            preferred_location: preferred_location !== undefined ? preferred_location : customer.preferred_location,
+            preferred_doctor: preferred_doctor !== undefined ? preferred_doctor : customer.preferred_doctor,
+            preferred_day: preferred_day !== undefined ? preferred_day : customer.preferred_day,
+            preferred_time: preferred_time !== undefined ? preferred_time : customer.preferred_time,
+            preferred_contact: preferred_contact || customer.preferred_contact,
+            reminder_type: reminder || customer.reminder_type,
+            language: language || customer.language,
+            notes: notes || customer.notes,
+            status: status || customer.status
+        });
+
+        return res.success(customer, 'Customer updated successfully', 200)
+
+    } catch (error) {
+        console.error('Error updating customer:', error);
+        res.fail('Failed to update customer', 500)
+    }
+});
 // ============================================
 // GET /api/customers/get-all-by-query
 // Search customers by name, email, or phone
@@ -238,94 +313,7 @@ router.get('/:id', authenticate, async (req, res) => {
     }
 });
 
-// ✅ Update customer
-router.put('/:id', authenticate, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const {
-            name,
-            email,
-            phone,
-            preferred_location,
-            preferred_doctor,
-            preferred_day,
-            preferred_time,
-            preferred_contact,
-            notes,
-            status
-        } = req.body;
 
-        const customer = await Customer.findByPk(id);
-
-        if (!customer) {
-            return res.status(404).json({
-                success: false,
-                message: 'Customer not found'
-            });
-        }
-
-        // Check email uniqueness if email is being updated
-        if (email && email !== customer.email) {
-            const existingEmail = await Customer.findOne({
-                where: { email: email.toLowerCase().trim() }
-            });
-            if (existingEmail) {
-                return res.status(409).json({
-                    success: false,
-                    message: 'Email already in use'
-                });
-            }
-        }
-
-        // Check phone uniqueness if phone is being updated
-        if (phone && phone !== customer.phone) {
-            const existingPhone = await Customer.findOne({
-                where: { phone: phone.trim() }
-            });
-            if (existingPhone) {
-                return res.status(409).json({
-                    success: false,
-                    message: 'Phone number already in use'
-                });
-            }
-        }
-
-        // Update customer
-        await customer.update({
-            name: name || customer.name,
-            email: email ? email.toLowerCase().trim() : customer.email,
-            phone: phone || customer.phone,
-            preferred_location: preferred_location !== undefined ? preferred_location : customer.preferred_location,
-            preferred_doctor: preferred_doctor !== undefined ? preferred_doctor : customer.preferred_doctor,
-            preferred_day: preferred_day !== undefined ? preferred_day : customer.preferred_day,
-            preferred_time: preferred_time !== undefined ? preferred_time : customer.preferred_time,
-            preferred_contact: preferred_contact || customer.preferred_contact,
-            notes: notes !== undefined ? notes : customer.notes,
-            status: status || customer.status
-        });
-
-        res.json({
-            success: true,
-            message: 'Customer updated successfully',
-            data: customer
-        });
-
-    } catch (error) {
-        console.error('Error updating customer:', error);
-
-        if (error.name === 'SequelizeValidationError') {
-            return res.status(400).json({
-                success: false,
-                message: error.errors.map(e => e.message).join(', ')
-            });
-        }
-
-        res.status(500).json({
-            success: false,
-            message: 'Failed to update customer'
-        });
-    }
-});
 
 // ✅ Delete customer (soft delete or hard delete)
 router.delete('/:id', authenticate, async (req, res) => {

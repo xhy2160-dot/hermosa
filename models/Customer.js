@@ -76,6 +76,14 @@ export default (sequelize) => {
                 }
             }
         },
+        language: {
+            type: DataTypes.STRING,
+            defaultValue: 'EN'
+        },
+        reminder_type: {
+            type: DataTypes.STRING,
+            defaultValue: '24 hour'
+        },
         // Additional fields for better tracking
         status: {
             type: DataTypes.ENUM('active', 'inactive', 'archived'),

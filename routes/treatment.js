@@ -1,6 +1,7 @@
 import express from 'express';
+import { Sequelize } from 'sequelize'
 import db from '../models/index.js';
-const { Treatment, Customer, Staff, Room } = db;
+const { Treatment, Customer, Staff, Room, Appointment, InstallPayment } = db;
 
 const router = express.Router();
 // ============================================
@@ -10,170 +11,119 @@ const router = express.Router();
 router.post('/add', async (req, res) => {
     try {
         const {
-            name,
-            date,
-            start_time,
-            end_time,
             customer_id,
-            staff_id,
-            location,
-            payment,
-            payment_date,
-            amount,
-            balance,
+            name,
+            total,
             remark,
-            status
+            added_by,
         } = req.body;
 
         if (!name || !customer_id) {
-            return res.status(400).json({
-                success: false,
-                message: 'Name and customer_id are required'
-            });
+            res.fail('Missing required fields: name and customer_id are required', 400);
         }
 
         // ✅ Validate customer exists
         const customer = await Customer.findByPk(customer_id);
         if (!customer) {
-            return res.status(404).json({
-                success: false,
-                message: 'Customer not found'
-            });
-        }
-
-        // ✅ Validate status (if provided)
-        if (status && !['in-progress', 'completed', 'cancelled', 'no-show'].includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid status. Must be: in-progress, completed, cancelled, or no-show'
-            });
+            res.fail('Customer not found', 404);
         }
 
         // ✅ Create treatment
         const treatment = await Treatment.create({
-            name: name.trim(),
-            date: date || null,
-            start_time: start_time || null,
-            end_time: end_time || null,
-            customer_id: parseInt(customer_id),
-            staff_id: staff_id ? parseInt(staff_id) : null,
-            location: location || '5075 Yonge St #600, Richmond Hill',
-            payment: payment || null,
-            payment_date: payment_date || null,
-            amount: amount ?? 0,
-            balance: balance ?? 0,
+            customer_id,
+            name,
+            total: total || 0.00,
             remark: remark || null,
-            status: status || 'in-progress'
+            added_by: added_by || null
         });
 
-        res.status(201).json({
-            success: true,
-            message: 'Treatment created successfully',
-            data: treatment
-        });
+        res.success(treatment, 'Treatment created successfully', 200);
 
     } catch (error) {
         console.error('Error creating treatment:', error);
-
-        // ✅ Handle specific Sequelize errors
-        if (error.name === 'SequelizeValidationError') {
-            return res.status(400).json({
-                success: false,
-                message: 'Validation error',
-                errors: error.errors.map(e => ({
-                    field: e.path,
-                    message: e.message
-                }))
-            });
-        }
-
-        if (error.name === 'SequelizeForeignKeyConstraintError') {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid customer_id. Customer does not exist.'
-            });
-        }
-
-        if (error.name === 'SequelizeUniqueConstraintError') {
-            return res.status(409).json({
-                success: false,
-                message: 'Duplicate entry',
-                errors: error.errors.map(e => ({
-                    field: e.path,
-                    message: e.message
-                }))
-            });
-        }
-
-        res.status(500).json({
-            success: false,
-            message: 'Failed to create treatment',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
-        });
+        res.fail('Failed to create treatment', 500);
     }
 });
 
 router.get('/get-all-by-cusId', async (req, res) => {
     try {
         const { customerId } = req.query;
-        console.log('Received customerId query:', req.query);
-
         const parsedId = parseInt(customerId, 10);
+
+        // 🔑 修复：加上 return，防止因参数错误导致后面的代码继续执行
         if (!customerId || isNaN(parsedId)) {
-            return res.status(400).json({
-                success: false,
-                message: 'A valid numerical customerId query parameter is required.'
-            });
+            return res.fail('Missing or invalid customerId query parameter', 400);
         }
 
-        // 1. Fetch treatments and eager-load the associated Staff record
+        // 1. 正常查出 treatments 及其关联的 appointments 的状态
         const treatments = await Treatment.findAll({
             where: { customer_id: parsedId },
+            order: [
+                // 1. Explicitly qualify status as `Treatment.status` 
+                [
+                    Sequelize.literal(`CASE WHEN \`Treatment\`.\`status\` = 'in-progress' THEN 0 ELSE 1 END`),
+                    'ASC'
+                ],
+                // 2. Secondary Sort: ID newest first
+                ['id', 'DESC']
+            ],
+            limit: 100,
             include: [
                 {
                     model: Staff,
-                    as: 'staff', // Matches the association alias defined in your models
-                    attributes: ['name'] // Only fetch the name column from the staff table
+                    as: 'staff',
+                    attributes: ['name']
                 },
                 {
-                    model: Room,
-                    as: 'room', // Matches the association alias defined in your models
-                    attributes: ['name'] // Only fetch the name column from the room table
+                    model: Appointment,
+                    as: 'appointments',
+                    attributes: ['status']
+                },
+                {
+                    model: InstallPayment,
+                    as: 'payments',
                 }
             ]
         });
 
-        // 2. Iterate (map) through the results to flatten and inject staff_name directly
+        // 2. 🚀 核心重构：在 map 里做计算，拍平数据的同时转为计数
         const formattedTreatments = treatments.map(treatment => {
-            const plainTreatment = treatment.toJSON(); // Convert Sequelize instance to plain JS object
+            const plainTreatment = treatment.toJSON();
 
-            // Extract the name from the nested object, fallback if staff is missing
+            // 提取员工姓名
             plainTreatment.staff_name = plainTreatment.staff?.name || 'Unknown Staff';
-            plainTreatment.room_name = plainTreatment.room ? plainTreatment.room.name : null;
-            plainTreatment.customer_name = plainTreatment.customer?.name || 'Unknown Customer';
-            plainTreatment.customer_phone = plainTreatment.customer?.phone || 'Unknown Phone';
 
-            // Optional: If you explicitly want to delete the old raw staff_id or nested staff object
-            // delete plainTreatment.staff_id; 
+            // 统计预约数量
+            const appointmentsList = plainTreatment.appointments || [];
+
+            plainTreatment.total_appointments = appointmentsList.length; // 总预约数
+            plainTreatment.completed_appointments = appointmentsList.filter(
+                app => app.status === 'completed'
+            ).length; // 已完成的预约数
+
+            const treatmentTotal = parseFloat(treatment.total || 0).toFixed(2);
+            const payments = treatment.payments || [];
+
+            // 4. 稳健的数字计算，防范 JS 浮点数相加产生多余小数位 (如 0.1 + 0.2 = 0.30000000004)
+            const rawTotalPaid = payments.reduce((sum, item) => {
+                return sum + parseFloat(item.amount || 0);
+            }, 0);
+
+            plainTreatment.totalPaid = parseFloat(rawTotalPaid.toFixed(2));
+            plainTreatment.balance = parseFloat((treatmentTotal - plainTreatment.totalPaid).toFixed(2));
+
+            // ✨ 优雅剥离：删掉没用的嵌套大对象和预约明细数组
+            delete plainTreatment.payments;
             delete plainTreatment.staff;
-            delete plainTreatment.room;
-            delete plainTreatment.customer;
+            delete plainTreatment.appointments;
 
             return plainTreatment;
         });
 
-        res.status(200).json({
-            success: true,
-            message: 'Treatments retrieved successfully',
-            data: formattedTreatments // Sends the flattened iterated array
-        });
+        res.success(formattedTreatments, 'Treatments retrieved successfully', 200);
     } catch (error) {
         console.error('Error fetching treatments:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch treatments',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
-        });
+        res.fail('Failed to fetch treatments', 500);
     }
 });
 
@@ -265,9 +215,12 @@ router.put('/update', async (req, res) => {
     } catch (error) {
         console.error('Error updating treatment:', error);
         res.status(500).json({
-        })
+            success: false,
+            message: 'Failed to update treatment',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
-})
+});
 
 
 export default router;

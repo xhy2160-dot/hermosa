@@ -13,13 +13,7 @@ export default {
       treatment_id: {
         type: Sequelize.INTEGER,
         allowNull: true,
-        comment: '关联的疗程/项目单ID',
-        references: {
-          table: 'treatments',
-          key: 'id'
-        },
-        onDelete: 'SET NULL',
-        onUpdate: 'CASCADE'
+        comment: '关联的疗程/项目单ID'
       },
       title: {
         type: Sequelize.STRING(250),
@@ -47,9 +41,9 @@ export default {
         comment: '门店位置'
       },
       room: {
-        type: Sequelize.STRING(100),
+        type: Sequelize.INTEGER,
         allowNull: true,
-        comment: '房间名称或代号'
+        comment: '房间id'
       },
       assigned_staff: {
         type: Sequelize.INTEGER,
@@ -88,9 +82,22 @@ export default {
     // 💡 针对高频的日历看板查询建立复合索引，大幅提升多门店/按天筛选时的渲染速度
     await queryInterface.addIndex('appointments', ['location', 'date']);
     await queryInterface.addIndex('appointments', ['assigned_staff']);
+
+    await queryInterface.addConstraint('appointments', {
+      fields: ['treatment_id'],
+      type: 'foreign key',
+      name: 'fk_appointments_treatment_id',
+      references: {
+        table: 'treatments',
+        field: 'id'
+      },
+      onDelete: 'SET NULL',
+      onUpdate: 'CASCADE'
+    });
   },
 
   async down(queryInterface, Sequelize) {
+    await queryInterface.removeConstraint('appointments', 'fk_appointments_treatment_id');
     await queryInterface.dropTable('appointments');
   }
 };
