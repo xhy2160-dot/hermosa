@@ -44,5 +44,9 @@ app.use('/api/rooms', roomRoutes); // Mount the rooms route
 app.use('/api/appointments', appointmentRoutes); // Mount the appointments route
 app.use('/api/payments', paymentRoutes); // Mount the payments route
 
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 
 app.listen(3000, () => console.log('Server running cleanly on port 3000'));
