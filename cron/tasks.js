@@ -62,26 +62,126 @@ export const sendAppointmentReminders = async () => {
         console.log(`Processing ${appointments.length} appointments sequentially...`);
 
         // Use sequential execution to preserve database connection limits 
+        // for (const appointment of appointments) {
+        //     const { start_time, id, treatment, date, reminder_24h_sent, reminder_1h_sent } = appointment;
+        //     const customer = treatment?.customer;
+
+        //     // Guard against missing customer, phone, or opt-out settings
+        //     if (!customer || !customer.phone) {
+        //         console.warn(`⚠️ Skipping Appt ID ${id}: Missing customer details or phone number.`);
+        //         continue;
+        //     }
+
+        //     const reminderType = customer.reminder_type;
+        //     if (!reminderType || reminderType === 'none') {
+        //         continue; // Customer does not want reminders
+        //     }
+
+        //     // Calculate precise timing
+        //     const appointmentTime = new Date(`${date} ${start_time}`);
+        //     const timeDiffMs = appointmentTime - now;
+        //     const diffInHours = timeDiffMs / (1000 * 60 * 60);
+        //     const diffInMinutes = timeDiffMs / (1000 * 60);
+
+        //     const spaPhone = process.env.MED_SPA_PHONE || '+1 (226) 503-8015';
+        //     const spaEmail = process.env.MED_SPA_EMAIL || 'info@hermosamedspa.com';
+
+        //     // =================================================================
+        //     // TRIGGER 1: Independent 24-Hour Reminder
+        //     // =================================================================
+        //     const wants24h = reminderType === '24 hour' || reminderType === 'both';
+        //     if (wants24h && !reminder_24h_sent && diffInHours > 0 && diffInHours <= 24.5) {
+        //         try {
+        //             const messageBody24h = getReminderMessage(
+        //                 customer.language,
+        //                 customer.name,
+        //                 '24-hour',
+        //                 date,
+        //                 start_time,
+        //                 spaPhone,
+        //                 spaEmail
+        //             );
+
+        //             await client.messages.create('acct_01kxgbx3aae0pt946967rn9hkf', {
+        //                 body: messageBody24h,
+        //                 conversation: {
+        //                     contact: {
+        //                         phone_number: customer.phone
+        //                     }
+        //                 }
+        //             });
+
+        //             appointment.reminder_24h_sent = new Date();
+        //             await appointment.save();
+        //             console.log(`✉️ Successful 24-hour SMS (${customer.language}) sent to ${customer.name} (${customer.phone})`);
+        //         } catch (smsError) {
+        //             console.error(`❌ Failed to send 24-hour SMS to ${customer.name} (Appt ID: ${id}):`, smsError.message);
+        //         }
+        //     }
+
+        //     // =================================================================
+        //     // TRIGGER 2: Independent 1-Hour Reminder
+        //     // =================================================================
+        //     const wants1h = reminderType === '1 hour' || reminderType === 'both';
+        //     if (wants1h && !reminder_1h_sent && diffInMinutes > 0 && diffInMinutes <= 75) {
+        //         try {
+        //             const messageBody1h = getReminderMessage(
+        //                 customer.language,
+        //                 customer.name,
+        //                 '1-hour',
+        //                 date,
+        //                 start_time,
+        //                 spaPhone,
+        //                 spaEmail
+        //             );
+
+        //             await client.messages.create('acct_01kxgbx3aae0pt946967rn9hkf', {
+        //                 body: messageBody1h,
+        //                 conversation: {
+        //                     contact: {
+        //                         phone_number: customer.phone
+        //                     }
+        //                 }
+        //             });
+
+        //             appointment.reminder_1h_sent = new Date();
+        //             await appointment.save();
+        //             console.log(`✉️ Successful 1-hour SMS (${customer.language}) sent to ${customer.name} (${customer.phone})`);
+        //         } catch (smsError) {
+        //             console.error(`❌ Failed to send 1-hour SMS to ${customer.name} (Appt ID: ${id}):`, smsError.message);
+        //         }
+        //     }
+        // }
         for (const appointment of appointments) {
             const { start_time, id, treatment, date, reminder_24h_sent, reminder_1h_sent } = appointment;
             const customer = treatment?.customer;
 
-            // Guard against missing customer, phone, or opt-out settings
+            // --- NEW DIAGNOSTIC LOGS ---
+            console.log(`--- [DEBUG] Checking Appt ID: ${id} ---`);
+            console.log(`Date/Time: ${date} ${start_time}`);
+            console.log(`Customer Name: ${customer?.name || 'MISSING'}`);
+            console.log(`Phone: ${customer?.phone || 'MISSING'}`);
+            console.log(`Reminder Type: ${customer?.reminder_type || 'NOT SET'}`);
+            console.log(`Sent flags -> 24h: ${reminder_24h_sent}, 1h: ${reminder_1h_sent}`);
+
             if (!customer || !customer.phone) {
-                console.warn(`⚠️ Skipping Appt ID ${id}: Missing customer details or phone number.`);
+                console.warn(`↳ SKIPPED: Missing customer details or phone number.`);
                 continue;
             }
 
             const reminderType = customer.reminder_type;
             if (!reminderType || reminderType === 'none') {
-                continue; // Customer does not want reminders
+                console.warn(`↳ SKIPPED: customer reminder_type is '${reminderType}'`);
+                continue;
             }
 
-            // Calculate precise timing
             const appointmentTime = new Date(`${date} ${start_time}`);
             const timeDiffMs = appointmentTime - now;
             const diffInHours = timeDiffMs / (1000 * 60 * 60);
             const diffInMinutes = timeDiffMs / (1000 * 60);
+
+            console.log(`Calculated windows -> diffInHours: ${diffInHours.toFixed(2)}, diffInMinutes: ${diffInMinutes.toFixed(2)}`);
+            // ----------------------------
 
             const spaPhone = process.env.MED_SPA_PHONE || '+1 (226) 503-8015';
             const spaEmail = process.env.MED_SPA_EMAIL || 'info@hermosamedspa.com';
@@ -91,32 +191,9 @@ export const sendAppointmentReminders = async () => {
             // =================================================================
             const wants24h = reminderType === '24 hour' || reminderType === 'both';
             if (wants24h && !reminder_24h_sent && diffInHours > 0 && diffInHours <= 24.5) {
-                try {
-                    const messageBody24h = getReminderMessage(
-                        customer.language,
-                        customer.name,
-                        '24-hour',
-                        date,
-                        start_time,
-                        spaPhone,
-                        spaEmail
-                    );
-
-                    await client.messages.create('acct_01kxgbx3aae0pt946967rn9hkf', {
-                        body: messageBody24h,
-                        conversation: {
-                            contact: {
-                                phone_number: customer.phone
-                            }
-                        }
-                    });
-
-                    appointment.reminder_24h_sent = new Date();
-                    await appointment.save();
-                    console.log(`✉️ Successful 24-hour SMS (${customer.language}) sent to ${customer.name} (${customer.phone})`);
-                } catch (smsError) {
-                    console.error(`❌ Failed to send 24-hour SMS to ${customer.name} (Appt ID: ${id}):`, smsError.message);
-                }
+                // ... (rest of your 24h code stays exactly the same)
+            } else {
+                console.log(`↳ 24h Condition Failed. wants24h: ${wants24h}, !sent: ${!reminder_24h_sent}, hoursMatch: ${diffInHours > 0 && diffInHours <= 24.5}`);
             }
 
             // =================================================================
@@ -124,32 +201,9 @@ export const sendAppointmentReminders = async () => {
             // =================================================================
             const wants1h = reminderType === '1 hour' || reminderType === 'both';
             if (wants1h && !reminder_1h_sent && diffInMinutes > 0 && diffInMinutes <= 75) {
-                try {
-                    const messageBody1h = getReminderMessage(
-                        customer.language,
-                        customer.name,
-                        '1-hour',
-                        date,
-                        start_time,
-                        spaPhone,
-                        spaEmail
-                    );
-
-                    await client.messages.create('acct_01kxgbx3aae0pt946967rn9hkf', {
-                        body: messageBody1h,
-                        conversation: {
-                            contact: {
-                                phone_number: customer.phone
-                            }
-                        }
-                    });
-
-                    appointment.reminder_1h_sent = new Date();
-                    await appointment.save();
-                    console.log(`✉️ Successful 1-hour SMS (${customer.language}) sent to ${customer.name} (${customer.phone})`);
-                } catch (smsError) {
-                    console.error(`❌ Failed to send 1-hour SMS to ${customer.name} (Appt ID: ${id}):`, smsError.message);
-                }
+                // ... (rest of your 1h code stays exactly the same)
+            } else {
+                console.log(`↳ 1h Condition Failed. wants1h: ${wants1h}, !sent: ${!reminder_1h_sent}, minsMatch: ${diffInMinutes > 0 && diffInMinutes <= 75}`);
             }
         }
 
