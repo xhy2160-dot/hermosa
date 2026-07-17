@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { sendAppointmentReminders } from './tasks.js';
 
-cron.schedule('*/10 * * * *', async () => {
+cron.schedule('* * * * *', async () => {
     await sendAppointmentReminders();
 });
 
