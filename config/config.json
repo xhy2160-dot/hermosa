@@ -4,20 +4,23 @@
     "password": "QQxhy7629",
     "database": "hermosa",
     "host": "127.0.0.1",
-    "dialect": "mysql"
+    "dialect": "mysql",
+    "timezone": "-04:00"
   },
   "test": {
     "username": "root",
     "password": "QQxhy7629",
     "database": "hermosa",
     "host": "127.0.0.1",
-    "dialect": "mysql"
+    "dialect": "mysql",
+    "timezone": "-04:00"
   },
   "production": {
     "username": "root",
     "password": "QQxhy7629",
     "database": "hermosa",
     "host": "127.0.0.1",
-    "dialect": "mysql"
+    "dialect": "mysql",
+    "timezone": "-04:00"
   }
 }

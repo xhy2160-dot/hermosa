@@ -77,7 +77,7 @@ export const sendAppointmentReminders = async () => {
             }
 
             // Calculate precise timing
-            const appointmentTime = new Date(`${date}T${start_time}`);
+            const appointmentTime = new Date(`${date} ${start_time}`);
             const timeDiffMs = appointmentTime - now;
             const diffInHours = timeDiffMs / (1000 * 60 * 60);
             const diffInMinutes = timeDiffMs / (1000 * 60);
