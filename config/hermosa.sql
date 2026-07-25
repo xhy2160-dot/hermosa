@@ -1,12 +1,35 @@
 -- Database: hermosa
--- Generated: 2026-07-16T21:34:16.279Z
+-- Generated: 2026-07-25T16:31:47.473Z
 -- Export: Structure and Data
 
 CREATE DATABASE IF NOT EXISTS `hermosa`;
 USE `hermosa`;
 
+-- Table: activity_logs
+-- Generated: 2026-07-25T16:31:47.508Z
+-- Export: Structure and Data
+
+DROP TABLE IF EXISTS `activity_logs`;
+CREATE TABLE `activity_logs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `type` enum('added','edited','cancelled','login','system') NOT NULL,
+  `actor` varchar(100) NOT NULL,
+  `verb` varchar(255) NOT NULL,
+  `object` text NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `activity_logs_type` (`type`)
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+INSERT INTO `activity_logs` (`id`, `type`, `actor`, `verb`, `object`, `created_at`, `updated_at`) VALUES
+  (3, 'added', 'Aaron', 'added a new appointment for', 'Aaron Xiao at 2026-07-25 15:30', 'Sat Jul 25 2026 11:25:06 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 11:25:06 GMT-0300 (Atlantic Daylight Time)'),
+  (4, 'edited', 'Aaron', 'added a new appointment ', 'at 2026-07-25 15:30', 'Sat Jul 25 2026 11:25:50 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 11:25:50 GMT-0300 (Atlantic Daylight Time)'),
+  (5, 'edited', 'Aaron', 'edited an appointment ', 'at 2026-07-25 15:30:00', 'Sat Jul 25 2026 12:19:32 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 12:19:32 GMT-0300 (Atlantic Daylight Time)');
+
+
 -- Table: appointments
--- Generated: 2026-07-16T21:34:16.315Z
+-- Generated: 2026-07-25T16:31:47.515Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `appointments`;
@@ -31,7 +54,7 @@ CREATE TABLE `appointments` (
   KEY `appointments_assigned_staff` (`assigned_staff`),
   KEY `fk_appointments_treatment_id` (`treatment_id`),
   CONSTRAINT `fk_appointments_treatment_id` FOREIGN KEY (`treatment_id`) REFERENCES `treatments` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=20 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 INSERT INTO `appointments` (`id`, `treatment_id`, `title`, `date`, `start_time`, `end_time`, `location`, `room`, `assigned_staff`, `remark`, `status`, `created_at`, `updated_at`, `reminder_24h_sent`, `reminder_1h_sent`) VALUES
   (2, 4, 'tbd', 'Sat Jul 11 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '11:00:00', '11:30:00', 'RH', 19, 1, 'test', 'scheduled', 'Sat Jul 11 2026 12:45:38 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 11 2026 12:45:38 GMT-0300 (Atlantic Daylight Time)', NULL, NULL),
@@ -48,11 +71,15 @@ emark la k la ', 'cancelled', 'Tue Jul 14 2026 14:13:55 GMT-0300 (Atlantic Dayli
   (12, 9, 'tbd', 'Wed Jul 15 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '12:00:00', '17:00:00', 'RH', 21, 2, 'remark', 'scheduled', 'Wed Jul 15 2026 13:03:12 GMT-0300 (Atlantic Daylight Time)', 'Wed Jul 15 2026 13:03:12 GMT-0300 (Atlantic Daylight Time)', NULL, NULL),
   (13, 24, 'tbd', 'Thu Jul 16 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '11:00:00', '11:30:00', 'NY', 13, 1, 'note', 'completed', 'Thu Jul 16 2026 13:01:18 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 14:21:22 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 13:21:01 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 13:22:00 GMT-0300 (Atlantic Daylight Time)'),
   (14, 19, 'tbd', 'Thu Jul 16 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '12:30:00', '13:00:00', 'NY', 14, 1, 'note', 'scheduled', 'Thu Jul 16 2026 13:25:25 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 14:31:00 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 13:26:00 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 14:31:00 GMT-0300 (Atlantic Daylight Time)'),
-  (15, 16, 'tbd', 'Thu Jul 16 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '11:00:00', '11:30:00', 'NY', 15, 1, 'note', 'scheduled', 'Thu Jul 16 2026 13:27:50 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 10:31:47 GMT-0300 (Atlantic Daylight Time)', NULL, NULL);
+  (15, 16, 'tbd', 'Thu Jul 16 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '11:00:00', '11:30:00', 'NY', 15, 1, 'note', 'scheduled', 'Thu Jul 16 2026 13:27:50 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 10:31:47 GMT-0300 (Atlantic Daylight Time)', NULL, NULL),
+  (16, 26, 'tbd', 'Sat Jul 25 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '15:30:00', '16:00:00', 'NY', 12, 1, 'remark', 'scheduled', 'Sat Jul 25 2026 08:48:37 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 09:01:00 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 09:01:00 GMT-0300 (Atlantic Daylight Time)', NULL),
+  (17, 26, 'tbd', 'Sat Jul 25 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '15:30:00', '16:00:00', 'NY', 12, 1, 'remark', 'scheduled', 'Sat Jul 25 2026 08:56:04 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 09:01:00 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 09:01:00 GMT-0300 (Atlantic Daylight Time)', NULL),
+  (18, 15, 'tbd', 'Sat Jul 25 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '12:30:00', '13:00:00', 'NY', 15, 4, 'aaa', 'scheduled', 'Sat Jul 25 2026 11:18:51 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 11:18:51 GMT-0300 (Atlantic Daylight Time)', NULL, NULL),
+  (19, 6, 'tbd', 'Sat Jul 25 2026 00:00:00 GMT-0300 (Atlantic Daylight Time)', '15:30:00', '16:00:00', 'NY', 16, 1, 'remark?', 'scheduled', 'Sat Jul 25 2026 11:25:06 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 12:19:32 GMT-0300 (Atlantic Daylight Time)', NULL, NULL);
 
 
 -- Table: customers
--- Generated: 2026-07-16T21:34:16.323Z
+-- Generated: 2026-07-25T16:31:47.520Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `customers`;
@@ -80,7 +107,7 @@ CREATE TABLE `customers` (
 ) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 INSERT INTO `customers` (`id`, `name`, `email`, `phone`, `preferred_location`, `preferred_doctor`, `preferred_day`, `preferred_time`, `preferred_contact`, `status`, `notes`, `created_at`, `updated_at`, `language`, `reminder_type`) VALUES
-  (11, 'Aaron Xiao', 'axiao@blueocean.caa', '+12265038015', 'NY', NULL, 'Tuesday', '15:41:00', 'email', 'active', NULL, 'Wed Jul 01 2026 18:41:30 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 16 2026 15:12:39 GMT-0300 (Atlantic Daylight Time)', 'CN_S', '24h'),
+  (11, 'Aaron Xiao', 'axiao@blueocean.caa', '+12265038015', 'NY', NULL, 'Tuesday', '15:41:00', 'email', 'active', NULL, 'Wed Jul 01 2026 18:41:30 GMT-0300 (Atlantic Daylight Time)', 'Sat Jul 25 2026 11:29:46 GMT-0300 (Atlantic Daylight Time)', 'CN_S', 'both'),
   (12, 'jerry', 'jerry@abc.com', '+16473369666', 'NY', 'lee', 'Tuesday', '11:48:00', 'email', 'active', 'test', 'Thu Jul 02 2026 14:46:49 GMT-0300 (Atlantic Daylight Time)', 'Thu Jul 02 2026 14:46:49 GMT-0300 (Atlantic Daylight Time)', 'CN_S', '24 hour'),
   (13, 'Carl', 'carl@email.com', '+19027223300', 'NY', NULL, 'Monday', '09:30:00', 'email', 'active', 'this is the 3rd customer', 'Tue Jul 07 2026 23:14:16 GMT-0300 (Atlantic Daylight Time)', 'Tue Jul 07 2026 23:14:16 GMT-0300 (Atlantic Daylight Time)', 'CN_T', '24 hour'),
   (14, 'John', 'john@example.com', '+12265038014', 'NY', 'doc who', 'Monday', '11:30:00', 'email', 'active', 'notes', 'Wed Jul 15 2026 18:38:43 GMT-0300 (Atlantic Daylight Time)', 'Wed Jul 15 2026 18:38:43 GMT-0300 (Atlantic Daylight Time)', 'KR', '24 hour'),
@@ -88,7 +115,7 @@ INSERT INTO `customers` (`id`, `name`, `email`, `phone`, `preferred_location`, `
 
 
 -- Table: install_payments
--- Generated: 2026-07-16T21:34:16.327Z
+-- Generated: 2026-07-25T16:31:47.524Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `install_payments`;
@@ -118,7 +145,7 @@ INSERT INTO `install_payments` (`id`, `treatment_id`, `amount`, `payment_method`
 
 
 -- Table: rooms
--- Generated: 2026-07-16T21:34:16.329Z
+-- Generated: 2026-07-25T16:31:47.526Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `rooms`;
@@ -146,7 +173,7 @@ INSERT INTO `rooms` (`id`, `name`, `location`, `created_at`, `updated_at`) VALUE
 
 
 -- Table: sequelizemeta
--- Generated: 2026-07-16T21:34:16.331Z
+-- Generated: 2026-07-25T16:31:47.528Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `sequelizemeta`;
@@ -174,11 +201,12 @@ INSERT INTO `sequelizemeta` (`name`) VALUES
   ('20260709125718-add-customer-id-back-to-treatments.js'),
   ('20260715182851-add-language-and-reminder-type-to-customers.js'),
   ('20260716123133-update-appointment-reminder-columns.js'),
-  ('20260716133437-add-total-sessions-to-treatments.js');
+  ('20260716133437-add-total-sessions-to-treatments.js'),
+  ('20260725121912-create-activity-log.js');
 
 
 -- Table: staffs
--- Generated: 2026-07-16T21:34:16.335Z
+-- Generated: 2026-07-25T16:31:47.532Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `staffs`;
@@ -203,7 +231,7 @@ INSERT INTO `staffs` (`id`, `name`, `phone`, `email`, `password`, `role`, `creat
 
 
 -- Table: sub_treatments
--- Generated: 2026-07-16T21:34:16.343Z
+-- Generated: 2026-07-25T16:31:47.551Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `sub_treatments`;
@@ -227,7 +255,7 @@ CREATE TABLE `sub_treatments` (
 
 
 -- Table: treatments
--- Generated: 2026-07-16T21:34:16.346Z
+-- Generated: 2026-07-25T16:31:47.568Z
 -- Export: Structure and Data
 
 DROP TABLE IF EXISTS `treatments`;
