@@ -3,6 +3,7 @@ import { Op } from 'sequelize';
 import sequelize from '../db.js';
 import db from '../models/index.js';
 import { getReminderMessage } from '../utils/translations.js';
+import { addALog } from '../utils/addActivityLog.js';
 const { Customer, Treatment, Appointment } = db;
 
 const client = new Surge({
@@ -98,6 +99,7 @@ export const sendAppointmentReminders = async () => {
 
                     appointment.reminder_24h_sent = new Date();
                     await appointment.save();
+                    await addALog('system', 'System', 'sent 24h reminder SMS to', `${customer.name}`)
                     console.log(`✉️ Successful 24-hour SMS (${customer.language}) sent to ${customer.name}`);
                 } catch (smsError) {
                     console.error(`❌ Failed to send 24-hour SMS to ${customer.name}:`, smsError.message);
@@ -127,6 +129,7 @@ export const sendAppointmentReminders = async () => {
 
                     appointment.reminder_1h_sent = new Date();
                     await appointment.save();
+                    await addALog('system', 'System', 'sent 1-hour reminder SMS to', `${customer.name}`)
                     console.log(`✉️ Successful 1-hour SMS (${customer.language}) sent to ${customer.name}`);
                 } catch (smsError) {
                     console.error(`❌ Failed to send 1-hour SMS to ${customer.name}:`, smsError.message);

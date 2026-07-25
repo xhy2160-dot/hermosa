@@ -134,5 +134,34 @@ router.get('/me', (req, res) => {
     }
 });
 
+router.post('/logout', async (req, res) => {
+    try {
+        // Cookie options must match the login flags (excluding maxAge/expires)
+        const cookieOptions = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        };
+
+        // Clear both active cookie keys set during login
+        res.clearCookie('auth_token', cookieOptions);
+        res.clearCookie('token', cookieOptions);
+
+        // Standardized success response
+        return res.status(200).json({
+            success: true,
+            message: "Logout successful"
+        });
+
+    } catch (error) {
+        console.error('Logout routing exception:', error);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
 // Export the router group
 export default router;

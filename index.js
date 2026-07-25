@@ -18,6 +18,8 @@ import treatmentRoutes from './routes/treatment.js';
 import roomRoutes from './routes/rooms.js'; // Import the rooms router
 import appointmentRoutes from './routes/appointment.js'; // Import the appointments router
 import paymentRoutes from './routes/payments.js'; // Import the payments router
+import logRoutes from './routes/logs.js';
+
 const app = express();
 
 // Middleware
@@ -43,6 +45,7 @@ app.use('/api/treatment', treatmentRoutes);
 app.use('/api/rooms', roomRoutes); // Mount the rooms route
 app.use('/api/appointments', appointmentRoutes); // Mount the appointments route
 app.use('/api/payments', paymentRoutes); // Mount the payments route
+app.use('/api/logs', logRoutes)
 
 app.get(/.*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

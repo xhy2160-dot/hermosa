@@ -2,6 +2,7 @@ import express from 'express';
 import { Op } from 'sequelize';
 import db from '../models/index.js';
 const { Appointment, Customer, Treatment, Staff, Room } = db;
+import { addALog } from '../utils/addActivityLog.js';
 
 const router = express.Router();
 
@@ -135,6 +136,7 @@ router.post('/add', async (req, res) => {
             start_time,
             end_time,
             remark,
+            staffName
         } = req.body;
 
         if (!treatment_id || !customer_id) {
@@ -161,6 +163,8 @@ router.post('/add', async (req, res) => {
             remark,
         });
 
+        await addALog('added', staffName, 'added a new appointment for', `${customer.name} at ${date} ${start_time}`)
+
         res.success(appointment, 'appointment created successfully', 201); // Use the success method from responseHandler
 
     } catch (error) {
@@ -183,6 +187,7 @@ router.put('/update', async (req, res) => {
             assigned_staff,
             treatment_id,
             status,
+            staffName
         } = req.body;
 
         const appointment = await Appointment.findByPk(id);
@@ -201,7 +206,7 @@ router.put('/update', async (req, res) => {
             remark,
             status: status || appointment.status, // Keep existing status if not provided
         });
-
+        await addALog('edited', staffName, 'edited an appointment ', `at ${date} ${start_time}`)
         res.success(appointment, 'Appointment updated successfully', 200);
     } catch (error) {
         console.error('Error updating appointment:', error);
