@@ -2,15 +2,6 @@ import { Model, DataTypes } from 'sequelize';
 
 export default (sequelize) => {
     class InstallPayment extends Model {
-        static associate(models) {
-            // Belongs to a parent Treatment
-            InstallPayment.belongsTo(models.Treatment, {
-                foreignKey: 'treatment_id',
-                as: 'treatment',
-                onDelete: 'CASCADE',
-                onUpdate: 'CASCADE'
-            });
-        }
     }
 
     InstallPayment.init(
@@ -24,10 +15,16 @@ export default (sequelize) => {
             treatment_id: {
                 type: DataTypes.INTEGER,
                 allowNull: false,
-                references: {
-                    model: 'treatments',
-                    key: 'id'
-                }
+                defaultValue: 0
+            },
+            appointment_id: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
+                defaultValue: 0
+            },
+            type: {
+                type: DataTypes.STRING,
+                allowNull: true,
             },
             amount: {
                 type: DataTypes.DECIMAL(10, 2),

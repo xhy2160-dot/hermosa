@@ -9,10 +9,19 @@ export default (sequelize) => {
             primaryKey: true,
             allowNull: false
         },
+        customer_id: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            references: {
+                model: 'Customers',
+                key: 'id'
+            }
+        },
         treatment_id: {
             type: DataTypes.INTEGER,
             allowNull: true,
-            comment: '关联的疗程/项目单ID'
+            comment: '关联的疗程/项目单ID',
+            defaultValue: 0
         },
         title: {
             type: DataTypes.STRING(250),
@@ -89,14 +98,8 @@ export default (sequelize) => {
     });
 
     Appointment.associate = (models) => {
-        // 💡 1. 关联到精简后的新 treatments 财务表
-        if (models.Treatment) {
-            Appointment.belongsTo(models.Treatment, {
-                foreignKey: 'treatment_id',
-                as: 'treatment'
-            });
-        }
 
+        Appointment.belongsTo(models.Customer, { foreignKey: 'customer_id', as: 'customer' });
         // 💡 2. 关联到 Staff (员工模型)
         if (models.Staff) {
             Appointment.belongsTo(models.Staff, {
@@ -110,6 +113,12 @@ export default (sequelize) => {
             Appointment.belongsTo(models.Room, {
                 foreignKey: 'room',
                 as: 'room_name'
+            });
+        }
+        if (models.InstallPayment) {
+            Appointment.hasMany(models.InstallPayment, {
+                foreignKey: 'appointment_id',
+                as: 'payments', // 对应你在路由里 include 的别名
             });
         }
     };

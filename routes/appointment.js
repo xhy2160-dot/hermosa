@@ -1,7 +1,7 @@
 import express from 'express';
 import { Op } from 'sequelize';
 import db from '../models/index.js';
-const { Appointment, Customer, Treatment, Staff, Room } = db;
+const { sequelize, Appointment, Customer, Treatment, Staff, Room, InstallPayment } = db;
 import { addALog } from '../utils/addActivityLog.js';
 
 const router = express.Router();
@@ -9,69 +9,193 @@ const router = express.Router();
 router.get('/get-all-by-date', async (req, res) => {
     try {
         const { date } = req.query;
+
+        // 🌟 FIX 1: Added return to stop execution if date is missing
         if (!date) {
-            res.fail('A valid date query parameter is required.', 400);
+            return res.fail('A valid date query parameter is required.', 400);
         }
 
-        // 1. Fetch treatments and eager-load the associated Staff record
+        // 1. Fetch appointments with associated Staff, Room, and Customer records
         const appointments = await Appointment.findAll({
             where: {
                 date: date,
                 status: {
-                    [Op.ne]: 'cancelled' // 👈 Adds status != 'cancelled'
+                    [Op.ne]: 'cancelled'
                 }
             },
             include: [
                 {
                     model: Staff,
-                    as: 'staff', // Matches the association alias defined in your models
-                    attributes: ['name'] // Only fetch the name column from the staff table
+                    as: 'staff',
+                    attributes: ['name']
                 },
                 {
                     model: Room,
-                    as: 'room_name', // Matches the association alias defined in your models
-                    attributes: ['name'] // Only fetch the name column from the room table
+                    as: 'room_name',
+                    attributes: ['name']
                 },
                 {
-                    model: Treatment,
-                    as: 'treatment', // Matches the association alias defined in your models
-                    attributes: ['name', 'customer_id'], // Only fetch the name column from the treatment table
-                    include: [
-                        // 🚀 在这里嵌套关联 Customer
-                        {
-                            model: Customer,
-                            as: 'customer', // 确保这个别名与 Treatment 和 Customer 之间定义的关联一致
-                            attributes: ['name', 'phone', 'email'] // 提取客户详情
-                        }
-                    ]
+                    model: Customer,
+                    as: 'customer',
+                    attributes: ['id', 'name', 'phone', 'email'] // Added 'id' here for customer_id mapping
                 }
             ]
         });
 
+        // 🌟 FIX 2: Batch fetch Treatments without direct model association
+        // Extract non-null unique treatment IDs from the appointments list
+        const treatmentIds = [...new Set(
+            appointments
+                .map(app => app.treatment_id)
+                .filter(id => id !== 0)
+        )];
+
+        // Fetch all related treatments in 1 single query
+        let treatmentMap = {};
+        if (treatmentIds.length > 0) {
+            const treatments = await Treatment.findAll({
+                where: {
+                    id: {
+                        [Op.in]: treatmentIds
+                    }
+                },
+                attributes: ['id', 'name']
+            });
+
+            // Create a fast lookup map: { treatment_id: treatment_name }
+            treatmentMap = treatments.reduce((acc, t) => {
+                acc[t.id] = t.name;
+                return acc;
+            }, {});
+        }
+
+        // 🌟 FIX 3: Safely map and flatten the response
         const flattenedAppointments = appointments.map(app => {
-            // 将 Sequelize 实例转换为纯 JavaScript 对象
-            const { staff, room_name, treatment, ...baseInfo } = app.get({ plain: true });
+            // Safely convert to plain JS object and separate nested models
+            const { staff, room_name, customer, ...baseInfo } = app.get({ plain: true });
 
             return {
-                ...baseInfo, // 自动保留 id, title, date, start_time, location, room, remark 等所有基础字段
+                ...baseInfo, // Retains id, date, start_time, location, remark, treatment_id, etc.
 
-                // 拍平 staff 和 room
+                // Flatten staff & room
                 staff_name: staff?.name || null,
-                room_title: room_name?.name || null, // 避免和基础字段中的 room 冲突，这里命名为 room_title
+                room_title: room_name?.name || null,
 
-                // 拍平 treatment 及其嵌套的 customer
-                treatment_name: treatment?.name || null,
-                customer_id: treatment?.customer_id || null,
-                customer_name: treatment?.customer?.name || null,
-                customer_phone: treatment?.customer?.phone || null,
-                customer_email: treatment?.customer?.email || null
+                // Lookup treatment name from our batch dictionary
+                treatment_name: baseInfo.treatment_id ? (treatmentMap[baseInfo.treatment_id] || null) : null,
+
+                // Flatten customer details (fixed undefined customer bug)
+                customer_id: customer?.id || null,
+                customer_name: customer?.name || null,
+                customer_phone: customer?.phone || null,
+                customer_email: customer?.email || null
             };
         });
 
-        res.success(flattenedAppointments, 'Appointments retrieved successfully', 200); // Use the success method from responseHandler
+        return res.success(flattenedAppointments, 'Appointments retrieved successfully', 200);
+
     } catch (error) {
         console.error('Error fetching appointments:', error);
-        res.fail('Failed to fetch appointments', 500); // Use the fail method from responseHandler
+        return res.fail('Failed to fetch appointments', 500);
+    }
+});
+
+router.get('/get-all-by-customerId', async (req, res) => {
+    try {
+        const { customerId } = req.query;
+        const parsedId = parseInt(customerId, 10);
+
+        // 🌟 1. FIX: Proper validation and accurate error message
+        if (!customerId || isNaN(parsedId)) {
+            return res.fail('Missing or invalid customerId query parameter', 400);
+        }
+
+        // 2. Fetch appointments
+        const appointments = await Appointment.findAll({
+            where: { customer_id: parsedId },
+            include: [
+                {
+                    model: Staff,
+                    as: 'staff',
+                    attributes: ['name']
+                },
+                {
+                    model: Room,
+                    as: 'room_name',
+                    attributes: ['name']
+                },
+                {
+                    model: Customer,
+                    as: 'customer',
+                    attributes: ['id', 'name', 'phone', 'email']
+                }
+            ]
+        });
+
+        if (!appointments || appointments.length === 0) {
+            return res.success([], 'No appointments found for this customer', 200);
+        }
+
+        // 🌟 3. FIX: Batch fetch all payments in ONE single database query
+        const appointmentIds = appointments.map(app => app.id);
+        const payments = await InstallPayment.findAll({
+            where: {
+                appointment_id: {
+                    [Op.in]: appointmentIds
+                }
+            }
+        });
+
+        // Group payments by appointment_id into a lookup object for O(1) performance
+        // Example: { 101: [payment1, payment2], 102: [payment3] }
+        const paymentsByAppointment = payments.reduce((acc, payment) => {
+            const appId = payment.appointment_id;
+            if (!acc[appId]) acc[appId] = [];
+            acc[appId].push(payment);
+            return acc;
+        }, {});
+
+        // 🌟 4. FIX: Synchronous mapping (No unhandled async/promises)
+        const flattenedAppointments = appointments.map(app => {
+            const { staff, room_name, customer, ...baseInfo } = app.get({ plain: true });
+
+            // Calculate total paid for this specific appointment
+            const appPayments = paymentsByAppointment[baseInfo.id] || [];
+            let total = 0;
+
+            appPayments.forEach(payment => {
+                const amount = parseFloat(payment.amount || 0);
+
+                // 🌟 Cast to Number to prevent "0" === 0 type mismatch failures
+                if (Number(payment.treatment_id) === 0) {
+                    total += amount;
+                } else {
+                    total += amount;
+                    total = 0 - total; // Ensure total doesn't go negative due to overpayment
+                }
+            });
+
+            // 🌟 Clean up -0 floating point quirks before returning
+            const formattedTotal = Math.abs(total) < 0.00001 ? 0 : parseFloat(total.toFixed(2));
+
+            return {
+                ...baseInfo,
+                staff_name: staff?.name || null,
+                room_name: room_name?.name || null,
+                treatment_name: app.title || null,
+                customer_id: customer?.id || null,
+                customer_name: customer?.name || null,
+                customer_phone: customer?.phone || null,
+                customer_email: customer?.email || null,
+                total_paid: formattedTotal
+            };
+        });
+
+        return res.success(flattenedAppointments, 'Appointments retrieved successfully', 200);
+
+    } catch (error) {
+        console.error('Error fetching appointments by customer ID:', error);
+        return res.fail('Failed to fetch appointments', 500);
     }
 });
 
@@ -85,6 +209,13 @@ router.get('/get-all-by-treatmentId', async (req, res) => {
             return res.fail('Missing or invalid treatmentId query parameter', 400);
         }
 
+        // 1. Fetch the treatment record once directly
+        const treatmentRecord = await Treatment.findByPk(parsedId, {
+            attributes: ['name']
+        });
+        const treatmentName = treatmentRecord?.name || null;
+
+        // 2. Fetch appointments (without Treatment eager loading)
         const appointments = await Appointment.findAll({
             where: { treatment_id: parsedId },
             include: [
@@ -99,57 +230,83 @@ router.get('/get-all-by-treatmentId', async (req, res) => {
                     attributes: ['name']
                 },
                 {
-                    model: Treatment,
-                    as: 'treatment',
-                    attributes: ['name']
+                    model: Customer,
+                    as: 'customer',
+                    attributes: ['id', 'name', 'phone', 'email'] // Added Customer if needed by frontend
                 }
             ]
         });
 
+        // 3. Flatten and attach staff, room, customer, and the pre-fetched treatment_name
         const flattenedAppointments = appointments.map(app => {
-            const { staff, room_name, treatment, ...baseInfo } = app.get({ plain: true });
+            const { staff, room_name, customer, ...baseInfo } = app.get({ plain: true });
 
             return {
                 ...baseInfo,
                 staff_name: staff?.name || null,
                 room_name: room_name?.name || null,
-                treatment_name: treatment?.name || null
+                treatment_name: treatmentName, // 👈 Attached safely here
+                customer_id: customer?.id || null,
+                customer_name: customer?.name || null,
+                customer_phone: customer?.phone || null,
+                customer_email: customer?.email || null
             };
         });
 
-        res.success(flattenedAppointments, 'Appointments retrieved successfully', 200);
+        return res.success(flattenedAppointments, 'Appointments retrieved successfully', 200);
     } catch (error) {
-        console.error('Error fetching appointments:', error);
-        res.fail('Failed to fetch appointments', 500);
+        console.error('Error fetching appointments by treatment ID:', error);
+        return res.fail('Failed to fetch appointments', 500);
     }
 });
 
 router.post('/add', async (req, res) => {
     try {
-        const {
+        // 🌟 1. FIX: Declare treatment_name with 'let' so it can be safely modified
+        let {
             room_id,
             staff_id,
             customer_id,
             location,
-            treatment_id,
             date,
             start_time,
             end_time,
             remark,
-            staffName
+            staffName,
+            treatment_name,
+            treatment_id
         } = req.body;
 
-        if (!treatment_id || !customer_id) {
-            res.fail('Missing required fields: treatment and customer_id are required', 400);
+        // 🌟 2. FIX: Added return statement after response
+        if (!customer_id) {
+            return res.fail('Missing required fields: customer_id is required', 400);
         }
 
         // ✅ Validate customer exists
         const customer = await Customer.findByPk(customer_id);
         if (!customer) {
-            res.fail('Customer not found', 404);
+            return res.fail('Customer not found', 404);
         }
 
-        // ✅ Create treatment
+        if (!treatment_id) {
+            treatment_id = 0;
+        } else {
+            // Count existing appointments for this treatment
+            const count = await Appointment.count({ where: { treatment_id } });
+
+            // 🌟 3. FIX: Fetch treatment and access total_sessions correctly
+            const treatment = await Treatment.findOne({
+                where: { id: treatment_id },
+                attributes: ['total_sessions', 'name']
+            });
+
+            const total = treatment?.total_sessions || 1;
+            const currentSession = count + 1;
+
+            treatment_name = `${treatment.name || 'Treatment'} (${currentSession}/${total})`;
+        }
+
+        // ✅ Create appointment
         const appointment = await Appointment.create({
             room: room_id,
             assigned_staff: staff_id,
@@ -159,18 +316,17 @@ router.post('/add', async (req, res) => {
             date,
             start_time,
             end_time,
-            title: 'tbd',
+            title: treatment_name,
             remark,
         });
 
-        await addALog('added', staffName, 'added a new appointment for', `${customer.name} at ${date} ${start_time}`)
+        await addALog('added', staffName, 'added a new appointment for', `${customer.name} at ${date} ${start_time}`);
 
-        res.success(appointment, 'appointment created successfully', 201); // Use the success method from responseHandler
+        return res.success(appointment, 'Appointment created successfully', 201);
 
     } catch (error) {
         console.error('Error creating appointment:', error);
-        res.fail('Failed to create appointment', 500); // Use the fail method from responseHandler
-
+        return res.fail('Failed to create appointment', 500);
     }
 });
 
@@ -184,33 +340,101 @@ router.put('/update', async (req, res) => {
             location,
             remark,
             room,
-            assigned_staff,
-            treatment_id,
+            staff_id,
             status,
-            staffName
+            staffName,
+            treatment_name,
+            title
         } = req.body;
 
-        const appointment = await Appointment.findByPk(id);
-        if (!appointment) {
-            return res.fail('Appointment not found', 404);
+        let { treatment_id } = req.body;
+
+        // 🌟 1. Use a Managed Transaction (automatically commits on success, rolls back on error)
+        const result = await sequelize.transaction(async (t) => {
+            // Find appointment inside transaction
+            const appointment = await Appointment.findByPk(id, { transaction: t });
+            if (!appointment) {
+                return { error: 'Appointment not found', statusCode: 404 };
+            }
+
+            // Determine final status
+            const updatedStatus = status || appointment.status;
+            const targetTreatmentId = treatment_id || 0;
+
+            // Build unified update payload
+            const updateData = {
+                room,
+                assigned_staff: staff_id,
+                location,
+                date,
+                start_time,
+                end_time,
+                remark,
+                status: updatedStatus,
+                treatment_id: targetTreatmentId,
+            };
+
+            // Set title conditionally based on treatment_id presence
+            if (!targetTreatmentId) {
+                updateData.title = treatment_name || title || appointment.title;
+            }
+
+            // 🌟 2. Update Appointment within transaction
+            await appointment.update(updateData, { transaction: t });
+
+            // 🌟 3. Handle Treatment Completion logic if associated with a treatment
+            if (targetTreatmentId > 0) {
+                // Count all completed appointments for this treatment
+                const count = await Appointment.count({
+                    where: {
+                        treatment_id: targetTreatmentId,
+                        status: 'completed'
+                    },
+                    transaction: t
+                });
+
+                const treatment = await Treatment.findOne({
+                    where: { id: targetTreatmentId },
+                    attributes: ['id', 'total_sessions', 'status'],
+                    transaction: t
+                });
+
+                if (treatment) {
+                    const total = treatment.total_sessions || 1;
+
+                    // If total completed appointments reaches or exceeds total required sessions
+                    if (count >= total) {
+                        // 🌟 FIX: Added quotes around 'completed' and added await
+                        await treatment.update(
+                            { status: 'completed' },
+                            { transaction: t }
+                        );
+                    }
+                }
+            }
+
+            // 🌟 4. Log inside transaction (if addALog supports transaction passing)
+            await addALog(
+                'edited',
+                staffName,
+                'edited an appointment',
+                `at ${date} ${start_time}`,
+                { transaction: t } // Pass transaction if addALog accepts options
+            );
+
+            return { appointment };
+        });
+
+        // Check if the transaction callback returned an early failure state
+        if (result.error) {
+            return res.fail(result.error, result.statusCode);
         }
 
-        await appointment.update({
-            room,
-            assigned_staff,
-            location,
-            date,
-            start_time,
-            end_time,
-            treatment_id,
-            remark,
-            status: status || appointment.status, // Keep existing status if not provided
-        });
-        await addALog('edited', staffName, 'edited an appointment ', `at ${date} ${start_time}`)
-        res.success(appointment, 'Appointment updated successfully', 200);
+        return res.success(result.appointment, 'Appointment updated successfully', 200);
+
     } catch (error) {
         console.error('Error updating appointment:', error);
-        res.fail('Failed to update appointment', 500);
+        return res.fail('Failed to update appointment', 500);
     }
 });
 

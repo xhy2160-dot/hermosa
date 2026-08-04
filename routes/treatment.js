@@ -1,13 +1,14 @@
 import express from 'express';
-import { Sequelize } from 'sequelize'
+import { Sequelize, Op } from 'sequelize'
 import db from '../models/index.js';
-const { Treatment, Customer, Staff, Room, Appointment, InstallPayment } = db;
+const { sequelize, Treatment, Customer, Staff, Room, Appointment, InstallPayment } = db;
 
 const router = express.Router();
 // ============================================
 // POST /api/treatment/add
 // Create a new treatment
 // ============================================
+
 router.post('/add', async (req, res) => {
     try {
         const {
@@ -16,32 +17,54 @@ router.post('/add', async (req, res) => {
             total,
             remark,
             added_by,
+            payment_method,
+            total_sessions,
         } = req.body;
 
+        // 1. Validation check with immediate return
         if (!name || !customer_id) {
-            res.fail('Missing required fields: name and customer_id are required', 400);
+            return res.fail('Missing required fields: name and customer_id are required', 400);
         }
 
-        // ✅ Validate customer exists
-        const customer = await Customer.findByPk(customer_id);
-        if (!customer) {
-            res.fail('Customer not found', 404);
-        }
+        // 2. Wrap all database operations inside a managed transaction
+        const result = await sequelize.transaction(async (t) => {
+            // Validate customer exists within transaction
+            const customer = await Customer.findByPk(customer_id, { transaction: t });
+            if (!customer) {
+                return { error: 'Customer not found', statusCode: 404 };
+            }
 
-        // ✅ Create treatment
-        const treatment = await Treatment.create({
-            customer_id,
-            name,
-            total: total || 0.00,
-            remark: remark || null,
-            added_by: added_by || null
+            // Create treatment record
+            const treatment = await Treatment.create({
+                customer_id,
+                name,
+                total: total || 0.00,
+                remark: remark || null,
+                added_by: added_by || null,
+                total_sessions: total_sessions || 1
+            }, { transaction: t });
+
+            // Create initial payment record
+            await InstallPayment.create({
+                treatment_id: treatment.id,
+                type: 'initial',
+                amount: parseFloat(total) || 0.00,
+                payment_method: payment_method || null,
+            }, { transaction: t });
+
+            return { treatment };
         });
 
-        res.success(treatment, 'Treatment created successfully', 200);
+        // Check if transaction callback returned an early failure state
+        if (result.error) {
+            return res.fail(result.error, result.statusCode);
+        }
+
+        return res.success(result.treatment, 'Treatment created successfully', 201);
 
     } catch (error) {
         console.error('Error creating treatment:', error);
-        res.fail('Failed to create treatment', 500);
+        return res.fail('Failed to create treatment', 500);
     }
 });
 
@@ -50,21 +73,18 @@ router.get('/get-all-by-cusId', async (req, res) => {
         const { customerId } = req.query;
         const parsedId = parseInt(customerId, 10);
 
-        // 🔑 修复：加上 return，防止因参数错误导致后面的代码继续执行
         if (!customerId || isNaN(parsedId)) {
             return res.fail('Missing or invalid customerId query parameter', 400);
         }
 
-        // 1. 正常查出 treatments 及其关联的 appointments 的状态
+        // 1. Query treatments with staff, direct payments, and nested appointment payments
         const treatments = await Treatment.findAll({
             where: { customer_id: parsedId },
             order: [
-                // 1. Explicitly qualify status as `Treatment.status` 
                 [
                     Sequelize.literal(`CASE WHEN \`Treatment\`.\`status\` = 'in-progress' THEN 0 ELSE 1 END`),
                     'ASC'
                 ],
-                // 2. Secondary Sort: ID newest first
                 ['id', 'DESC']
             ],
             limit: 100,
@@ -75,44 +95,69 @@ router.get('/get-all-by-cusId', async (req, res) => {
                     attributes: ['name']
                 },
                 {
-                    model: Appointment,
-                    as: 'appointments',
-                    attributes: ['status']
+                    model: InstallPayment,
+                    as: 'payments' // Initial treatment payments
                 },
                 {
-                    model: InstallPayment,
-                    as: 'payments',
+                    model: Appointment,
+                    as: 'appointments',
+                    attributes: ['id', 'status'],
+                    include: [
+                        {
+                            model: InstallPayment,
+                            as: 'payments',
+                            where: {
+                                type: {
+                                    [Op.ne]: 'initial' // 🌟 Excludes any InstallPayment with type = 'initial'
+                                }
+                            },
+                            required: false
+                        }
+                    ]
                 }
             ]
         });
 
-        // 2. 🚀 核心重构：在 map 里做计算，拍平数据的同时转为计数
+
+
+        // 2. Format treatments and compute accurate totals
         const formattedTreatments = treatments.map(treatment => {
             const plainTreatment = treatment.toJSON();
-
-            // 提取员工姓名
+            // Format staff name
             plainTreatment.staff_name = plainTreatment.staff?.name || 'Unknown Staff';
 
-            // 统计预约数量
+            // Appointment counts
             const appointmentsList = plainTreatment.appointments || [];
-
-            plainTreatment.total_appointments = appointmentsList.length; // 总预约数
+            plainTreatment.total_appointments = appointmentsList.length;
             plainTreatment.completed_appointments = appointmentsList.filter(
                 app => app.status === 'completed'
-            ).length; // 已完成的预约数
+            ).length;
 
-            const treatmentTotal = parseFloat(treatment.total || 0).toFixed(2);
-            const payments = treatment.payments || [];
+            const treatmentTotal = parseFloat(plainTreatment.total || 0);
 
-            // 4. 稳健的数字计算，防范 JS 浮点数相加产生多余小数位 (如 0.1 + 0.2 = 0.30000000004)
-            const rawTotalPaid = payments.reduce((sum, item) => {
-                return sum + parseFloat(item.amount || 0);
+            // 🌟 3. Calculate Initial Treatment Payments (treatment_id === treatment.id)
+            const initialPayments = plainTreatment.payments || [];
+            console.log('Initial Payments:', initialPayments);
+            const initialPaidSum = initialPayments.reduce((sum, p) => {
+                const amount = parseFloat(p.amount || 0);
+                return p.type === 'initial' ? sum + amount : sum - amount;
             }, 0);
 
-            plainTreatment.totalPaid = parseFloat(rawTotalPaid.toFixed(2));
-            plainTreatment.balance = parseFloat((treatmentTotal - plainTreatment.totalPaid).toFixed(2));
+            // 🌟 4. Calculate Appointment Payments across all appointments for this treatment
+            let appointmentPaidSum = 0;
+            appointmentsList.forEach(app => {
+                const appPayments = app.payments || [];
+                appPayments.forEach(payment => {
+                    const amount = parseFloat(payment.amount || 0);
+                    // Deduct or add based on treatment_id logic (if appointment payments reduce balance)
+                    appointmentPaidSum += amount;
 
-            // ✨ 优雅剥离：删掉没用的嵌套大对象和预约明细数组
+                });
+            });
+            plainTreatment.appUsed = appointmentPaidSum
+            plainTreatment.balance = parseFloat((initialPaidSum - appointmentPaidSum).toFixed(2));
+
+            // Clean up unwanted internal objects before returning to frontend
             delete plainTreatment.payments;
             delete plainTreatment.staff;
             delete plainTreatment.appointments;
@@ -120,18 +165,17 @@ router.get('/get-all-by-cusId', async (req, res) => {
             return plainTreatment;
         });
 
-        res.success(formattedTreatments, 'Treatments retrieved successfully', 200);
+        return res.success(formattedTreatments, 'Treatments retrieved successfully', 200);
+
     } catch (error) {
         console.error('Error fetching treatments:', error);
-        res.fail('Failed to fetch treatments', 500);
+        return res.fail('Failed to fetch treatments', 500);
     }
 });
 
 router.get('/get-all-by-date', async (req, res) => {
     try {
         const { date } = req.query;
-        console.log('Received date query:', req.query);
-
 
         if (!date) {
             return res.status(400).json({

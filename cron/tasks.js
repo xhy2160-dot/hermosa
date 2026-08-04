@@ -36,20 +36,6 @@ export const sendAppointmentReminders = async () => {
                 ]
             },
             replacements: { startWindow: startString, endWindow: endString },
-            include: [
-                {
-                    model: Treatment,
-                    as: 'treatment',
-                    required: true,
-                    include: [
-                        {
-                            model: Customer,
-                            as: 'customer',
-                            required: true,
-                        }
-                    ]
-                }
-            ]
         });
 
         if (appointments.length === 0) {
@@ -61,7 +47,7 @@ export const sendAppointmentReminders = async () => {
 
         for (const appointment of appointments) {
             const { start_time, id, treatment, date, reminder_24h_sent, reminder_1h_sent } = appointment;
-            const customer = treatment?.customer;
+            const customer = await Customer.findByPk(appointment.customer_id);
 
             if (!customer || !customer.phone) continue;
 
@@ -92,7 +78,7 @@ export const sendAppointmentReminders = async () => {
                         spaEmail
                     );
 
-                    await client.messages.create('acct_01kxgbx3aae0pt946967rn9hkf', {
+                    await client.messages.create(process.env.SURGE_ACCT_KEY, {
                         body: messageBody24h,
                         conversation: { contact: { phone_number: customer.phone } }
                     });

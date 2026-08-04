@@ -118,7 +118,10 @@ export default (sequelize) => {
 
     // ✅ Add any associations here
     Customer.associate = (models) => {
-        // Example: Customer.hasMany(models.Appointment, { foreignKey: 'customerId' });
+        Customer.hasMany(models.StoreCredit, {
+            foreignKey: 'customer_id',
+            as: 'storeCredits',
+        });
     };
 
     return Customer;
