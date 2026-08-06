@@ -9,7 +9,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon index.js",
-    "go": "TZ='America/New_York' pm2 restart my-app --update-env",
+    "go": "TZ='America/New_York' pm2 start index.js --name 'hermosa'",
+    "restart": "TZ='America/New_York' pm2 restart 'hermosa'",
     "generate": "npx sequelize-cli migration:generate --name",
     "migrate": "npx sequelize-cli db:migrate",
     "undo": "npx sequelize-cli db:migrate:undo",
