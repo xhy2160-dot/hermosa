@@ -113,6 +113,7 @@ router.get('/get-all-by-customerId', async (req, res) => {
         // 2. Fetch appointments
         const appointments = await Appointment.findAll({
             where: { customer_id: parsedId },
+            order: [['id', 'DESC']],
             include: [
                 {
                     model: Staff,
