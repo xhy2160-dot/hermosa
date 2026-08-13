@@ -1,4 +1,3 @@
-// models/Customer.js
 import { DataTypes } from 'sequelize';
 
 export default (sequelize) => {
@@ -24,14 +23,12 @@ export default (sequelize) => {
         },
         email: {
             type: DataTypes.STRING(100),
-            allowNull: false,
+            allowNull: true, // 👈 Changed from false to true
             validate: {
                 isEmail: {
                     msg: 'Please provide a valid email address'
-                },
-                notEmpty: {
-                    msg: 'Email is required'
                 }
+                // 👈 Removed notEmpty validator so null/empty values pass validation
             }
         },
         phone: {
@@ -67,7 +64,7 @@ export default (sequelize) => {
         preferred_contact: {
             type: DataTypes.ENUM('phone', 'email', 'text'),
             allowNull: false,
-            defaultValue: 'email',
+            defaultValue: 'phone', // 👈 Tip: If email is nullable, defaulting preferred_contact to 'phone' or 'text' is safer
             field: 'preferred_contact',
             validate: {
                 isIn: {
@@ -84,7 +81,6 @@ export default (sequelize) => {
             type: DataTypes.STRING,
             defaultValue: '24 hour'
         },
-        // Additional fields for better tracking
         status: {
             type: DataTypes.ENUM('active', 'inactive', 'archived'),
             allowNull: false,
@@ -102,7 +98,7 @@ export default (sequelize) => {
         indexes: [
             {
                 unique: true,
-                fields: ['email']
+                fields: ['email'] // MySQL allows multiple NULL values in UNIQUE indexes by default
             },
             {
                 fields: ['preferred_location']
@@ -116,7 +112,6 @@ export default (sequelize) => {
         ]
     });
 
-    // ✅ Add any associations here
     Customer.associate = (models) => {
         Customer.hasMany(models.StoreCredit, {
             foreignKey: 'customer_id',

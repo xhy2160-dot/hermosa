@@ -26,8 +26,8 @@ router.post('/add', authenticate, async (req, res) => {
         } = req.body;
 
         // Validate required fields
-        if (!name || !email || !phone) {
-            return res.fail('Missing required fields: name, email, and phone are required', 400);
+        if (!name  || !phone) {
+            return res.fail('Missing required fields: name, and phone are required', 400);
         }
 
         if (formatNAPhoneNumber(phone) === null) {
