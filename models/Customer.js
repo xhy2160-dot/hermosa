@@ -24,12 +24,6 @@ export default (sequelize) => {
         email: {
             type: DataTypes.STRING(100),
             allowNull: true, // 👈 Changed from false to true
-            validate: {
-                isEmail: {
-                    msg: 'Please provide a valid email address'
-                }
-                // 👈 Removed notEmpty validator so null/empty values pass validation
-            }
         },
         phone: {
             type: DataTypes.STRING(20),

@@ -26,7 +26,7 @@ router.post('/add', authenticate, async (req, res) => {
         } = req.body;
 
         // Validate required fields
-        if (!name  || !phone) {
+        if (!name || !phone) {
             return res.fail('Missing required fields: name, and phone are required', 400);
         }
 
@@ -111,16 +111,6 @@ router.put('/update', authenticate, async (req, res) => {
 
         if (!customer) {
             res.fail('Customer not found', 404)
-        }
-
-        // Check email uniqueness if email is being updated
-        if (email && email !== customer.email) {
-            const existingEmail = await Customer.findOne({
-                where: { email: email.toLowerCase().trim() }
-            });
-            if (existingEmail) {
-                res.fail('Email already in use', 404)
-            }
         }
 
         // Check phone uniqueness if phone is being updated
