@@ -111,6 +111,17 @@ export default (sequelize) => {
             foreignKey: 'customer_id',
             as: 'storeCredits',
         });
+        Customer.hasMany(models.CustomerRecord, {
+            foreignKey: 'customerId',
+            as: 'records',        // 这个 alias 要和 include 里的一致
+            onDelete: 'CASCADE'
+        });
+        Customer.associate = (models) => {
+            Customer.hasMany(models.File, {
+                foreignKey: 'customer_id',
+                as: 'files'
+            });
+        };
     };
 
     return Customer;

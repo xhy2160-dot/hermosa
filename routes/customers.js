@@ -2,10 +2,29 @@
 import express from 'express';
 import { Op } from 'sequelize';
 import db from '../models/index.js';
-const { Customer } = db;
+const { Customer, CustomerRecord, File } = db;
 import { authenticate } from '../middleware/auth.js';
 import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import xlsx from 'xlsx';
 
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadDir = 'uploads/';
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        // Retain the original filename (or prepend a timestamp to prevent OS-level file overwrites)
+        cb(null, file.originalname);
+    }
+});
+
+const upload = multer({ storage });
 const router = express.Router();
 
 // ✅ Create a new customer
@@ -276,30 +295,25 @@ router.get('/all', authenticate, async (req, res) => {
 });
 
 // ✅ Get customer by ID
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/', authenticate, async (req, res) => {
     try {
-        const { id } = req.params;
+        const { id } = req.query;
 
-        const customer = await Customer.findByPk(id);
+        console.log(id)
 
-        if (!customer) {
-            return res.status(404).json({
-                success: false,
-                message: 'Customer not found'
-            });
+        const result = await Customer.findByPk(id, {
+            include: [{ model: CustomerRecord, as: 'records' }]
+        });
+
+        if (!result) {
+            return res.fail('Customer not found', 404)
         }
 
-        res.json({
-            success: true,
-            data: customer
-        });
+        return res.success(result, 'Customer fetched successfully', 200)
 
     } catch (error) {
         console.error('Error fetching customer:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch customer'
-        });
+        res.fail('Failed to fetch customer', 500)
     }
 });
 
@@ -427,4 +441,207 @@ router.get('/search', authenticate, async (req, res) => {
 });
 
 
+
+//--------------------------------new page
+// router.post('/upload-excel', upload.single('file'), async (req, res) => {
+//     try {
+//         const workbook = xlsx.readFile(req.file.path);
+//         const sheet = workbook.Sheets[workbook.SheetNames[0]];
+//         const raw = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+//         // Find header row (skip duplicate headers)
+//         let dataStart = 0;
+//         for (let i = 0; i < Math.min(15, raw.length); i++) {
+//             const cell = String(raw[i][0] || '').trim().toLowerCase();
+//             if (cell === 'date') {
+//                 dataStart = i + 1;
+//                 break;
+//             }
+//         }
+
+//         // Parse rows
+//         const records = [];
+//         for (let i = dataStart; i < raw.length; i++) {
+//             const row = raw[i];
+//             if (!row || row.every(c => !c || String(c).trim() === '')) continue;
+
+//             records.push({
+//                 date: String(row[0] || '').trim(),
+//                 treatment: String(row[1] || '').trim(),
+//                 locationStaff: String(row[2] || '').trim(),
+//                 payment: String(row[3] || '').trim(),
+//                 amount: row[4] !== '' ? parseFloat(row[4]) : null,
+//                 total: row[5] !== '' ? parseFloat(row[5]) : null,
+//                 balance: row[6] !== '' ? parseFloat(row[6]) : null,
+//                 remark: String(row[7] || '').trim(),
+//                 rowIndex: i
+//             });
+//         }
+
+//         // Parse "Vanessa Wang 6479875030" from filename
+//         const base = req.file.originalname.replace(/\.(xlsx|xls)$/i, '').trim();
+//         const parts = base.split(/\s+/);
+//         const last = parts[parts.length - 1];
+//         const isPhone = /^[\d\s\-\+]+$/.test(last) && last.replace(/\D/g, '').length >= 7;
+
+//         const name = req.body.name || (isPhone ? parts.slice(0, -1).join(' ') : base);
+//         const phone = req.body.phone || (isPhone ? last.replace(/\D/g, '') : '');
+
+//         if (!phone) {
+//             return res.status(400).json({ error: 'Could not detect phone from filename. Provide phone manually.' });
+//         }
+
+//         const [customer, created] = await Customer.findOrCreate({
+//             where: { phone },
+//             defaults: { name, email: req.body.email || null, sourceFile: req.file.originalname }
+//         });
+
+//         // If customer exists, we append records (or you could destroy old ones first)
+//         await CustomerRecord.bulkCreate(
+//             records.map(r => ({ ...r, customerId: customer.id }))
+//         );
+
+//         const result = await Customer.findByPk(customer.id, {
+//             include: [{ model: CustomerRecord, as: 'records' }]
+//         });
+
+//         res.json(result);
+//     } catch (err) {
+//         console.error('Error processing Excel upload:', err);
+//         res.status(500).json({ error: err.message });
+//     }
+// });
+router.post('/upload-excel', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded.' });
+        }
+
+        const originalName = req.file.originalname;
+
+        // 1. Check if a file with this exact name has already been uploaded
+        const existingFile = await File.findOne({ where: { fileName: originalName } });
+        if (existingFile) {
+            return res.status(409).json({
+                error: `File "${originalName}" has already been uploaded previously.`
+            });
+        }
+
+        // 2. Read and parse the Excel file
+        const workbook = xlsx.readFile(req.file.path);
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const raw = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+        // Find header row (skip duplicate headers)
+        let dataStart = 0;
+        for (let i = 0; i < Math.min(15, raw.length); i++) {
+            const cell = String(raw[i][0] || '').trim().toLowerCase();
+            if (cell === 'date') {
+                dataStart = i + 1;
+                break;
+            }
+        }
+
+        // Parse rows
+        const records = [];
+        for (let i = dataStart; i < raw.length; i++) {
+            const row = raw[i];
+            if (!row || row.every(c => !c || String(c).trim() === '')) continue;
+
+            records.push({
+                date: String(row[0] || '').trim(),
+                treatment: String(row[1] || '').trim(),
+                locationStaff: String(row[2] || '').trim(),
+                payment: String(row[3] || '').trim(),
+                amount: row[4] !== '' ? String(row[4]).trim() : null,
+                total: row[5] !== '' ? String(row[5]).trim() : null,
+                balance: row[6] !== '' ? String(row[6]).trim() : null,
+                remark: String(row[7] || '').trim(),
+                rowIndex: i
+            });
+        }
+
+        // 3. Parse customer name and phone from original filename
+        const base = originalName.replace(/\.(xlsx|xls)$/i, '').trim();
+        const parts = base.split(/\s+/);
+        const last = parts[parts.length - 1];
+        const isPhone = /^[\d\s\-\+]+$/.test(last) && last.replace(/\D/g, '').length >= 7;
+
+        const name = req.body.name || (isPhone ? parts.slice(0, -1).join(' ') : base);
+        const phone = req.body.phone || (isPhone ? last.replace(/\D/g, '') : '');
+
+        if (!phone) {
+            return res.status(400).json({ error: 'Could not detect phone from filename. Provide phone manually.' });
+        }
+
+        // 4. Find or create Customer
+        const [customer] = await Customer.findOrCreate({
+            where: { phone },
+            defaults: { name, email: req.body.email || null, sourceFile: originalName }
+        });
+
+        // 5. Save appointment records
+        await CustomerRecord.bulkCreate(
+            records.map(r => ({ ...r, customerId: customer.id }))
+        );
+
+        // 6. Create entry in the Files table (hash is omitted/null for now)
+        await File.create({
+            customerId: customer.id,
+            fileName: originalName
+        });
+
+        // 7. Fetch updated customer details with records and attached files
+        const result = await Customer.findByPk(customer.id, {
+            include: [
+                { model: CustomerRecord, as: 'records' },
+            ]
+        });
+
+        res.json(result);
+    } catch (err) {
+        console.error('Error processing Excel upload:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+router.post('/save-cell-edit', authenticate, async (req, res) => {
+    try {
+        const { customerId, rowIndex, data } = req.body;
+
+        if (!customerId || rowIndex === undefined || rowIndex === null) {
+            return res.fail('Missing customerId or rowIndex', 400);
+        }
+
+        // Extract primary key `id`
+        const recordId = req.body.id || data?.id;
+        const { id, createdAt, updatedAt, ...recordData } = data || {};
+
+        let record = null;
+
+        // 1. If we have an explicit primary key ID, find existing record to update
+        if (recordId) {
+            record = await CustomerRecord.findByPk(recordId);
+        }
+
+        // 2. IF NO ID: It is a BRAND NEW row -> Create it directly (don't overwrite based on rowIndex!)
+        if (!record) {
+            record = await CustomerRecord.create({
+                customerId,
+                rowIndex,
+                ...recordData
+            });
+        } else {
+            // 3. IF ID EXISTS: Update the existing record
+            await record.update({
+                ...recordData,
+                rowIndex
+            });
+        }
+
+        return res.success({ saved: true, record }, 'Edit saved successfully', 200);
+    } catch (err) {
+        console.error('Error saving cell edit:', err);
+        return res.fail('Failed to save cell edit', 500);
+    }
+});
 export default router;
