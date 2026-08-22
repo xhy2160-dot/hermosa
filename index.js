@@ -22,6 +22,13 @@ import storeCreditRoutes from './routes/storeCredits.js'; // Import the store cr
 import logRoutes from './routes/logs.js';
 
 const app = express();
+
+// Increase JSON payload size limit (e.g., 50mb)
+app.use(express.json({ limit: '50mb' }));
+
+// Increase URL-encoded payload size limit
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
 app.disable('etag');
 // Middleware
 app.use(express.json());

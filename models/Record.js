@@ -9,24 +9,19 @@ export default (sequelize, DataTypes) => {
             type: DataTypes.INTEGER,
             allowNull: false
         },
-        date: DataTypes.STRING(50),
-        treatment: DataTypes.TEXT,
-        locationStaff: DataTypes.STRING(255),
-        payment: DataTypes.TEXT,
-        amount: {
-            type: DataTypes.STRING,
-            allowNull: true
-        },
-        total: {
-            type: DataTypes.STRING,
-            allowNull: true
-        },
-        balance: {
-            type: DataTypes.STRING,
-            allowNull: true
-        },
-        remark: DataTypes.TEXT,
-        rowIndex: DataTypes.INTEGER
+        workbook: {
+            type: DataTypes.TEXT('medium'),
+            allowNull: true,
+            get() {
+                // Optional: Automatically parse JSON when accessing record.workbook
+                const rawValue = this.getDataValue('workbook');
+                return rawValue ? JSON.parse(rawValue) : null;
+            },
+            set(value) {
+                // Optional: Automatically stringify object before saving to database
+                this.setDataValue('workbook', typeof value === 'object' ? JSON.stringify(value) : value);
+            }
+        }
     }, {
         tableName: 'records',
         timestamps: true

@@ -2,32 +2,16 @@
 import express from 'express';
 import { Op } from 'sequelize';
 import db from '../models/index.js';
-const { Customer, CustomerRecord, File } = db;
+const { sequelize, Customer, CustomerRecord } = db;
 import { authenticate } from '../middleware/auth.js';
 import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import xlsx from 'xlsx';
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = 'uploads/';
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        // Retain the original filename (or prepend a timestamp to prevent OS-level file overwrites)
-        cb(null, file.originalname);
-    }
-});
 
-const upload = multer({ storage });
+
 const router = express.Router();
 
-// ✅ Create a new customer
+const DEFAULT_WORKBOOK_DATA = `{"id":"workbook-01","sheetOrder":["sheet-01","sheet-02","sheet-03"],"name":"universheet","appVersion":"3.0.0-alpha","locale":"enUS","styles":{},"sheets":{"sheet-01":{"type":0,"id":"sheet-01","cellData":{"0":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"1":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"2":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"3":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"4":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"5":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"6":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"7":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"8":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"9":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"10":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"11":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"12":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"13":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}},"14":{"0":{},"1":{},"2":{},"3":{},"4":{},"5":{},"6":{},"7":{}}},"name":"sheet1","tabColor":"red","hidden":0,"rowCount":1000,"columnCount":20,"zoomRatio":1,"scrollTop":200,"scrollLeft":100,"defaultColumnWidth":93,"defaultRowHeight":27,"status":1,"showGridlines":1,"hideRow":[],"hideColumn":[],"rowHeader":{"width":46,"hidden":0},"columnHeader":{"height":20,"hidden":0},"selections":["A2"],"rightToLeft":0,"pluginMeta":{},"freeze":{"xSplit":0,"ySplit":0,"startRow":-1,"startColumn":-1},"mergeData":[],"rowData":{"2":{"hd":0,"h":27,"ah":27},"3":{"hd":0,"h":27,"ah":27},"4":{"hd":0,"h":27,"ah":27},"6":{"hd":0,"h":27,"ah":27},"8":{"hd":0,"h":27,"ah":27},"10":{"hd":0,"h":27,"ah":27}},"columnData":{}},"sheet-02":{"type":0,"id":"sheet-02","name":"sheet2","cellData":{},"tabColor":"","hidden":0,"rowCount":1000,"columnCount":20,"zoomRatio":1,"freeze":{"xSplit":0,"ySplit":0,"startRow":-1,"startColumn":-1},"scrollTop":0,"scrollLeft":0,"defaultColumnWidth":88,"defaultRowHeight":24,"mergeData":[],"rowData":{},"columnData":{},"showGridlines":1,"rowHeader":{"width":46,"hidden":0},"columnHeader":{"height":20,"hidden":0},"rightToLeft":0},"sheet-03":{"type":0,"id":"sheet-03","name":"sheet3","cellData":{},"tabColor":"","hidden":0,"rowCount":1000,"columnCount":20,"zoomRatio":1,"freeze":{"xSplit":0,"ySplit":0,"startRow":-1,"startColumn":-1},"scrollTop":0,"scrollLeft":0,"defaultColumnWidth":88,"defaultRowHeight":24,"mergeData":[],"rowData":{},"columnData":{},"showGridlines":1,"rowHeader":{"width":46,"hidden":0},"columnHeader":{"height":20,"hidden":0},"rightToLeft":0}},"resources":[]}`
+
 router.post('/add', authenticate, async (req, res) => {
     try {
         const {
@@ -44,19 +28,19 @@ router.post('/add', authenticate, async (req, res) => {
             notes
         } = req.body;
 
-        // Validate required fields
+        // 1. Validate required fields
         if (!name || !phone) {
-            return res.fail('Missing required fields: name, and phone are required', 400);
+            return res.fail('Missing required fields: name and phone are required', 400);
         }
 
-        if (formatNAPhoneNumber(phone) === null) {
+        const normalizedPhone = formatNAPhoneNumber(phone);
+        if (normalizedPhone === null) {
             return res.fail('Invalid phone number format', 400);
         }
 
         const normalizedEmail = email ? email.toLowerCase().trim() : null;
-        const normalizedPhone = phone ? formatNAPhoneNumber(phone) : null;
 
-        // 2. Build dynamic OR query based on what values were provided
+        // 2. Build duplicate search criteria
         const searchCriteria = [];
         if (normalizedEmail) searchCriteria.push({ email: normalizedEmail });
         if (normalizedPhone) searchCriteria.push({ phone: normalizedPhone });
@@ -69,7 +53,6 @@ router.post('/add', authenticate, async (req, res) => {
             });
 
             if (existingCustomer) {
-                // Determine exactly which field caused the collision for a better error message
                 const isEmailDup = normalizedEmail && existingCustomer.email === normalizedEmail;
                 const isPhoneDup = normalizedPhone && existingCustomer.phone === normalizedPhone;
 
@@ -82,27 +65,42 @@ router.post('/add', authenticate, async (req, res) => {
             }
         }
 
-        // Create customer
-        const customer = await Customer.create({
-            name: name.trim(),
-            email: email.toLowerCase().trim(),
-            phone: normalizedPhone,
-            preferred_location: preferred_location,
-            preferred_doctor: preferred_doctor || null,
-            preferred_day: preferred_day || null,
-            preferred_time: preferred_time || null,
-            preferred_contact: preferred_contact || 'email',
-            reminder_type: reminder || '24 hour',
-            language: language || 'EN',
-            notes: notes || null,
-            status: 'active'
+        // 3. Execute creation within a Managed Sequelize Transaction
+        const result = await sequelize.transaction(async (t) => {
+            // Step A: Create Customer
+            const customer = await Customer.create({
+                name: name.trim(),
+                email: normalizedEmail,
+                phone: normalizedPhone,
+                preferred_location: preferred_location || null,
+                preferred_doctor: preferred_doctor || null,
+                preferred_day: preferred_day || null,
+                preferred_time: preferred_time || null,
+                preferred_contact: preferred_contact || 'email',
+                reminder_type: reminder || '24 hour',
+                language: language || 'EN',
+                notes: notes || null,
+                status: 'active'
+            }, { transaction: t });
+
+            // Step B: Create default CustomerRecord with stringified initial workbook
+            const workbookPayload = typeof DEFAULT_WORKBOOK_DATA === 'string'
+                ? DEFAULT_WORKBOOK_DATA
+                : JSON.stringify(DEFAULT_WORKBOOK_DATA);
+
+            const record = await CustomerRecord.create({
+                customerId: customer.id,
+                workbook: workbookPayload
+            }, { transaction: t });
+
+            return { customer, record };
         });
 
-        return res.success(customer, 'Customer created successfully', 201)
+        return res.success(result.customer, 'Customer created successfully', 201);
 
     } catch (error) {
         console.error('Error creating customer:', error);
-        res.fail('Internal server error', 500)
+        return res.fail('Internal server error', 500);
     }
 });
 // routes/customers.js
@@ -298,17 +296,13 @@ router.get('/all', authenticate, async (req, res) => {
 router.get('/', authenticate, async (req, res) => {
     try {
         const { id } = req.query;
-
-        console.log(id)
-
         const result = await Customer.findByPk(id, {
-            include: [{ model: CustomerRecord, as: 'records' }]
+            include: [{ model: CustomerRecord, as: 'record' }]
         });
 
         if (!result) {
             return res.fail('Customer not found', 404)
         }
-
         return res.success(result, 'Customer fetched successfully', 200)
 
     } catch (error) {
@@ -316,8 +310,6 @@ router.get('/', authenticate, async (req, res) => {
         res.fail('Failed to fetch customer', 500)
     }
 });
-
-
 
 // ✅ Delete customer (soft delete or hard delete)
 router.delete('/:id', authenticate, async (req, res) => {
@@ -511,137 +503,136 @@ router.get('/search', authenticate, async (req, res) => {
 //         res.status(500).json({ error: err.message });
 //     }
 // });
-router.post('/upload-excel', upload.single('file'), async (req, res) => {
+router.post('/upload-excel', async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No file uploaded.' });
-        }
-
-        const originalName = req.file.originalname;
-
-        // 1. Check if a file with this exact name has already been uploaded
-        const existingFile = await File.findOne({ where: { fileName: originalName } });
-        if (existingFile) {
-            return res.status(409).json({
-                error: `File "${originalName}" has already been uploaded previously.`
-            });
-        }
-
-        // 2. Read and parse the Excel file
-        const workbook = xlsx.readFile(req.file.path);
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const raw = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-
-        // Find header row (skip duplicate headers)
-        let dataStart = 0;
-        for (let i = 0; i < Math.min(15, raw.length); i++) {
-            const cell = String(raw[i][0] || '').trim().toLowerCase();
-            if (cell === 'date') {
-                dataStart = i + 1;
-                break;
-            }
-        }
-
-        // Parse rows
-        const records = [];
-        for (let i = dataStart; i < raw.length; i++) {
-            const row = raw[i];
-            if (!row || row.every(c => !c || String(c).trim() === '')) continue;
-
-            records.push({
-                date: String(row[0] || '').trim(),
-                treatment: String(row[1] || '').trim(),
-                locationStaff: String(row[2] || '').trim(),
-                payment: String(row[3] || '').trim(),
-                amount: row[4] !== '' ? String(row[4]).trim() : null,
-                total: row[5] !== '' ? String(row[5]).trim() : null,
-                balance: row[6] !== '' ? String(row[6]).trim() : null,
-                remark: String(row[7] || '').trim(),
-                rowIndex: i
-            });
-        }
-
-        // 3. Parse customer name and phone from original filename
-        const base = originalName.replace(/\.(xlsx|xls)$/i, '').trim();
-        const parts = base.split(/\s+/);
-        const last = parts[parts.length - 1];
-        const isPhone = /^[\d\s\-\+]+$/.test(last) && last.replace(/\D/g, '').length >= 7;
-
-        const name = req.body.name || (isPhone ? parts.slice(0, -1).join(' ') : base);
-        const phone = req.body.phone || (isPhone ? last.replace(/\D/g, '') : '');
-
+        console.log('Upload payload body:', req.body);
+        const { name, email, workbookData } = req.body;
+        let { phone } = req.body
+        // 1. Validation
         if (!phone) {
-            return res.status(400).json({ error: 'Could not detect phone from filename. Provide phone manually.' });
+            return res.status(400).json({ error: 'Phone number is required to identify customer' });
         }
 
-        // 4. Find or create Customer
-        const [customer] = await Customer.findOrCreate({
+        phone = formatNAPhoneNumber(phone)
+
+        const payloadWorkbook = workbookData || workbook;
+        if (!payloadWorkbook) {
+            return res.status(400).json({ error: 'Workbook data payload is missing' });
+        }
+
+        // Convert object to string if model setters aren't configured
+        const stringifiedWorkbook = typeof payloadWorkbook === 'object'
+            ? JSON.stringify(payloadWorkbook)
+            : payloadWorkbook;
+
+        // 2. Find or create Customer by phone number
+        const [customer, createdCustomer] = await Customer.findOrCreate({
             where: { phone },
-            defaults: { name, email: req.body.email || null, sourceFile: originalName }
+            defaults: { name, email }
         });
 
-        // 5. Save appointment records
-        await CustomerRecord.bulkCreate(
-            records.map(r => ({ ...r, customerId: customer.id }))
-        );
+        // If customer already existed, optionally update their details
+        if (!createdCustomer && (name || email)) {
+            await customer.update({
+                ...(name && { name }),
+                ...(email && { email })
+            });
+        }
 
-        // 6. Create entry in the Files table (hash is omitted/null for now)
-        await File.create({
-            customerId: customer.id,
-            fileName: originalName
+        // 3. Upsert Customer Record (Create or Update existing workbook)
+        const [record, createdRecord] = await CustomerRecord.findOrCreate({
+            where: { customerId: customer.id },
+            defaults: {
+                customerId: customer.id,
+                workbook: stringifiedWorkbook
+            }
         });
 
-        // 7. Fetch updated customer details with records and attached files
+        // If record already existed, update its workbook column
+        if (!createdRecord) {
+            await record.update({
+                workbook: stringifiedWorkbook
+            });
+        }
+
+        // 4. Return customer with updated records included
         const result = await Customer.findByPk(customer.id, {
             include: [
-                { model: CustomerRecord, as: 'records' },
+                { model: CustomerRecord, as: 'record' }
             ]
         });
 
-        res.json(result);
+        return res.status(200).json({
+            message: createdRecord ? 'Excel data uploaded & record created' : 'Excel data updated successfully',
+            data: result
+        });
+
     } catch (err) {
         console.error('Error processing Excel upload:', err);
-        res.status(500).json({ error: err.message });
+        return res.status(500).json({ error: err.message });
     }
 });
 router.post('/save-cell-edit', authenticate, async (req, res) => {
     try {
-        const { customerId, rowIndex, data } = req.body;
-
-        if (!customerId || rowIndex === undefined || rowIndex === null) {
-            return res.fail('Missing customerId or rowIndex', 400);
+        const { customer_id, workbookData } = req.body;
+        // Validate required fields
+        if (!customer_id || !workbookData) {
+            return res.fail('Missing customerId or workbookData', 400);
         }
 
-        // Extract primary key `id`
-        const recordId = req.body.id || data?.id;
-        const { id, createdAt, updatedAt, ...recordData } = data || {};
+        // Convert workbook JSON object to string if model getter/setter isn't doing it automatically
+        const workbookPayload = typeof workbookData === 'object'
+            ? JSON.stringify(workbookData)
+            : workbookData;
 
-        let record = null;
+        // Upsert pattern: Find record by customerId or create a new one
+        const [record, created] = await CustomerRecord.findOrCreate({
+            where: { customerId: customer_id },
+            defaults: {
+                customerId: customer_id,
+                workbook: workbookPayload
+            }
+        });
 
-        // 1. If we have an explicit primary key ID, find existing record to update
-        if (recordId) {
-            record = await CustomerRecord.findByPk(recordId);
-        }
-
-        // 2. IF NO ID: It is a BRAND NEW row -> Create it directly (don't overwrite based on rowIndex!)
-        if (!record) {
-            record = await CustomerRecord.create({
-                customerId,
-                rowIndex,
-                ...recordData
-            });
-        } else {
-            // 3. IF ID EXISTS: Update the existing record
+        // If record already existed, update its workbook column payload
+        if (!created) {
             await record.update({
-                ...recordData,
-                rowIndex
+                workbook: workbookPayload
             });
         }
 
-        return res.success({ saved: true, record }, 'Edit saved successfully', 200);
+        return res.success(
+            { saved: true, recordId: record.id, customerId: customer_id },
+            created ? 'Workbook record created successfully' : 'Workbook updated successfully',
+            200
+        );
+
     } catch (err) {
-        console.error('Error saving cell edit:', err);
-        return res.fail('Failed to save cell edit', 500);
+        console.error('Error saving workbook payload:', err);
+        return res.fail('Failed to save workbook changes', 500);
+    }
+});
+
+router.get('/get-records-by-customerId', async (req, res) => {
+    try {
+        const customerId = req.query.customerId || req.query.customer_id;
+
+        if (!customerId) {
+            return res.status(400).json({ error: 'Missing customerId query parameter' });
+        }
+
+        const record = await CustomerRecord.findOne({
+            where: { customerId }
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: record
+        });
+
+    } catch (err) {
+        console.error('Error fetching record by customerId:', err);
+        return res.status(500).json({ error: err.message || 'Failed to fetch record' });
     }
 });
 export default router;
