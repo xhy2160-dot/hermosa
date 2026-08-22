@@ -3,6 +3,7 @@ import { Op } from 'sequelize';
 import db from '../models/index.js';
 const { sequelize, Appointment, Customer, Treatment, Staff, Room, InstallPayment } = db;
 import { addALog } from '../utils/addActivityLog.js';
+import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
 
 const router = express.Router();
 
@@ -263,74 +264,97 @@ router.get('/get-all-by-treatmentId', async (req, res) => {
 
 router.post('/add', async (req, res) => {
     try {
-        // 🌟 1. FIX: Declare treatment_name with 'let' so it can be safely modified
         let {
             room_id,
             staff_id,
+            staff_name,      // Expecting staff_name if staff_id is not provided
             customer_id,
+            customer_name,    // Expecting customer_name if customer_id is not provided
+            phone,            // Expecting phone for new customer creation
             location,
             date,
             start_time,
             end_time,
             remark,
-            staffName,
-            treatment_name,
-            treatment_id
+            staffName,        // Staff member performing the action (for logs)
+            treatment_name
         } = req.body;
 
-        // 🌟 2. FIX: Added return statement after response
-        if (!customer_id) {
-            return res.fail('Missing required fields: customer_id is required', 400);
+        phone = formatNAPhoneNumber(phone)
+        if (!phone) {
+            throw { status: 400, message: 'Invalid phone number!' };
         }
+        // Execute all queries within a managed transaction
+        const result = await sequelize.transaction(async (t) => {
+            let customer;
 
-        // ✅ Validate customer exists
-        const customer = await Customer.findByPk(customer_id);
-        if (!customer) {
-            return res.fail('Customer not found', 404);
-        }
+            if (!customer_id) {
+                if (!customer_name || !phone) {
+                    throw { status: 400, message: 'Customer Name and Phone are required' };
+                }
+                [customer] = await Customer.findOrCreate({
+                    where: { phone },
+                    defaults: { name: customer_name, phone },
+                    transaction: t
+                });
+                customer_id = customer.id;
+            }
 
-        if (!treatment_id) {
-            treatment_id = 0;
-        } else {
-            // Count existing appointments for this treatment
-            const count = await Appointment.count({ where: { treatment_id } });
+            customer = await Customer.findByPk(customer_id, { transaction: t });
 
-            // 🌟 3. FIX: Fetch treatment and access total_sessions correctly
-            const treatment = await Treatment.findOne({
-                where: { id: treatment_id },
-                attributes: ['total_sessions', 'name']
-            });
 
-            const total = treatment?.total_sessions || 1;
-            const currentSession = count + 1;
+            // 2. Resolve or Create Staff
 
-            treatment_name = `${treatment.name || 'Treatment'} (${currentSession}/${total})`;
-        }
+            let staffMember;
 
-        // ✅ Create appointment
-        const appointment = await Appointment.create({
-            room: room_id,
-            assigned_staff: staff_id,
-            customer_id,
-            location,
-            treatment_id,
-            date,
-            start_time,
-            end_time,
-            title: treatment_name,
-            remark,
+            if (!staff_id) {
+                if (!staff_name) {
+                    throw { status: 400, message: 'Staff Name is required' };
+                }
+                [staffMember] = await Staff.findOrCreate({
+                    where: { name: staff_name },
+                    defaults: { name: staff_name, password: 'test1234', email: 'example@email.com' },
+                    transaction: t
+                });
+                staff_id = staffMember.id;
+            }
+
+            // 3. Create Appointment
+            const appointment = await Appointment.create({
+                room: room_id,
+                assigned_staff: staff_id,
+                customer_id,
+                location,
+                date,
+                start_time,
+                end_time,
+                title: treatment_name,
+                remark,
+            }, { transaction: t });
+
+            // 4. Add Log (pass transaction if your logger supports it)
+            await addALog(
+                'added',
+                staffName,
+                'added a new appointment for',
+                `${customer?.name} at ${date} ${start_time}`,
+                { transaction: t }
+            );
+
+            return appointment;
         });
 
-        await addALog('added', staffName, 'added a new appointment for', `${customer.name} at ${date} ${start_time}`);
-
-        return res.success(appointment, 'Appointment created successfully', 201);
+        return res.success(result, 'Appointment created successfully', 201);
 
     } catch (error) {
+        // Handle custom operational errors thrown inside the transaction
+        if (error.status && error.message) {
+            return res.fail(error.message, error.status);
+        }
         console.error('Error creating appointment:', error);
         return res.fail('Failed to create appointment', 500);
     }
 });
-
 router.put('/update', async (req, res) => {
     try {
         const {

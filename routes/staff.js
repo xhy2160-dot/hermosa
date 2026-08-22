@@ -1,7 +1,8 @@
 // routes/staff.js
 import express from 'express';
 import db from '../models/index.js';
-const { Staff } = db;
+const { sequelize, Staff } = db;
+import { Op } from 'sequelize';
 import bcrypt from 'bcryptjs';
 import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
 
@@ -29,6 +30,35 @@ router.get('/get-all-staff', async (req, res) => {
         });
     }
 });
+
+router.get('/', async (req, res) => {
+    try {
+        const { name } = req.query;
+        console.log(name)
+        const staff = await Staff.findAll({
+            where: {
+                name: {
+                    [Op.like]: `%${name}%` // Case-insensitive partial match (Use Op.like for MySQL/SQLite)
+                }
+            },
+            attributes: { exclude: ['password'] }
+        });
+
+        res.json({
+            success: true,
+            count: staff.length,
+            data: staff
+        });
+    } catch (error) {
+        console.error('Error fetching staff by name:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch staff members',
+            error: error.message
+        });
+    }
+});
+
 
 // POST: /api/staff/add
 router.post('/add', async (req, res) => {
