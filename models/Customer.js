@@ -23,7 +23,8 @@ export default (sequelize) => {
         },
         email: {
             type: DataTypes.STRING(100),
-            allowNull: true, // 👈 Changed from false to true
+            allowNull: true,
+            defaultValue: null
         },
         phone: {
             type: DataTypes.STRING(20),
