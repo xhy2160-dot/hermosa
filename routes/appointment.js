@@ -265,7 +265,7 @@ router.get('/get-all-by-treatmentId', async (req, res) => {
 router.post('/add', async (req, res) => {
     try {
         let {
-            room_id,
+            room,
             staff_id,
             staff_name,      // Expecting staff_name if staff_id is not provided
             customer_id,
@@ -321,7 +321,7 @@ router.post('/add', async (req, res) => {
 
             // 3. Create Appointment
             const appointment = await Appointment.create({
-                room: room_id,
+                room: room,
                 assigned_staff: staff_id,
                 customer_id,
                 location,
