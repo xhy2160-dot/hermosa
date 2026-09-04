@@ -64,7 +64,7 @@ app.use('/api/store-credits', authenticate, storeCreditRoutes);
 app.use('/api/logs', authenticate, logRoutes);
 
 
-app.get('*', (req, res) => {
+app.get('/*splat', (req, res) => {
     if (req.path.startsWith('/api')) {
         return res.status(404).json({ success: false, message: 'API route not found' });
     }
