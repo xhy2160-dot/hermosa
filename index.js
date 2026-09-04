@@ -63,8 +63,8 @@ app.use('/api/payments', authenticate, paymentRoutes);
 app.use('/api/store-credits', authenticate, storeCreditRoutes);
 app.use('/api/logs', authenticate, logRoutes);
 
-// SPA Fallback Route (Only handles GET requests not starting with /api)
-app.get('*', (req, res, next) => {
+
+app.get('*', (req, res) => {
     if (req.path.startsWith('/api')) {
         return res.status(404).json({ success: false, message: 'API route not found' });
     }
