@@ -1,64 +1,75 @@
 import 'dotenv/config';
-
-// server.js
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import path from 'path';                // 👈 ADD THIS LINE
+import path from 'path';
 import { fileURLToPath } from 'url';
-import { responseHandler } from './middleware/responseHandler.js'; // Import the responseHandler middleware
 
-import './cron/cron.js'; // Import the cron job setup
-// Import your dedicated router
+import { responseHandler } from './middleware/responseHandler.js';
 import { authenticate } from './middleware/auth.js';
+import './cron/cron.js';
+
+// Route Imports
 import authRoutes from './routes/auth.js';
 import staffRoutes from './routes/staff.js';
 import customersRoutes from './routes/customers.js';
 import treatmentRoutes from './routes/treatment.js';
-import roomRoutes from './routes/rooms.js'; // Import the rooms router
-import appointmentRoutes from './routes/appointment.js'; // Import the appointments router
-import paymentRoutes from './routes/payments.js'; // Import the payments router
-import storeCreditRoutes from './routes/storeCredits.js'; // Import the store credits router
+import roomRoutes from './routes/rooms.js';
+import appointmentRoutes from './routes/appointment.js';
+import paymentRoutes from './routes/payments.js';
+import storeCreditRoutes from './routes/storeCredits.js';
 import logRoutes from './routes/logs.js';
 
 const app = express();
 
-// Increase JSON payload size limit (e.g., 50mb)
-app.use(express.json({ limit: '50mb' }));
-
-// Increase URL-encoded payload size limit
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-app.disable('etag');
-// Middleware
-app.use(express.json());
-app.use(cookieParser());
-app.use(cors({
-    origin: 'http://localhost:5173',
-    credentials: true
-}));
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Disable ETag header
+app.disable('etag');
+
+// CORS Configuration
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://xoxy.cc',
+    'https://www.xoxy.cc',
+    process.env.CLIENT_URL
+].filter(Boolean);
+
+app.use(cors({
+    origin: allowedOrigins,
+    credentials: true
+}));
+
+// Body Parsing Middleware (Keep 50mb limits, removed redundant call)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(cookieParser());
+
+// Static Files & Response Formatter
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(authenticate);
-app.use(responseHandler); // Use the responseHandler middleware
-// Mount your routes under a specific base path
+app.use(responseHandler);
 
+// Public Routes (Unauthenticated)
 app.use('/api/auth', authRoutes);
-app.use('/api/staff', staffRoutes);
-app.use('/api/customers', customersRoutes);
-app.use('/api/treatment', treatmentRoutes);
-app.use('/api/rooms', roomRoutes); // Mount the rooms route
-app.use('/api/appointments', appointmentRoutes); // Mount the appointments route
-app.use('/api/payments', paymentRoutes); // Mount the payments route
-app.use('/api/store-credits', storeCreditRoutes); // Mount the store credits route
-app.use('/api/logs', logRoutes);
 
-app.get(/.*/, (req, res) => {
+// Protected API Routes
+app.use('/api/staff', authenticate, staffRoutes);
+app.use('/api/customers', authenticate, customersRoutes);
+app.use('/api/treatment', authenticate, treatmentRoutes);
+app.use('/api/rooms', authenticate, roomRoutes);
+app.use('/api/appointments', authenticate, appointmentRoutes);
+app.use('/api/payments', authenticate, paymentRoutes);
+app.use('/api/store-credits', authenticate, storeCreditRoutes);
+app.use('/api/logs', authenticate, logRoutes);
+
+// SPA Fallback Route (Only handles GET requests not starting with /api)
+app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+        return res.status(404).json({ success: false, message: 'API route not found' });
+    }
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-
-app.listen(3000, () => console.log('Server running cleanly on port 3000'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running cleanly on port ${PORT}`));
