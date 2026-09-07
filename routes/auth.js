@@ -1,22 +1,29 @@
-// routes/auth.js
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
 import db from '../models/index.js';
+
 const { Staff } = db;
-
-
 const router = express.Router();
-const JWT_SECRET = 'foewvao9849anfoiqnaocwAA'
 
+// Always fall back to process.env.JWT_SECRET to keep keys synchronized
+const JWT_SECRET = process.env.JWT_SECRET || 'foewvao9849anfoiqnaocwAA';
+
+// Cookie options helper ensuring consistency
+const getCookieOptions = () => ({
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'lax', // Use 'lax' for production on same site / proxy
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+});
 
 // POST: /api/auth/login
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body; // 'email' can contain either email string or phone string
+        const { email, password } = req.body;
 
-        // Validate input
         if (!email || !password) {
             return res.status(400).json({
                 success: false,
@@ -24,7 +31,6 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Find staff by email OR phone
         const staff = await Staff.findOne({
             where: {
                 [Op.or]: [
@@ -34,15 +40,13 @@ router.post('/login', async (req, res) => {
             }
         });
 
-        // Check if staff exists
         if (!staff) {
             return res.status(401).json({
                 success: false,
-                message: "Invalid credentials." // Generic message avoids account enumeration
+                message: "Invalid credentials."
             });
         }
 
-        // Check if account is active
         if (staff.status === 'inactive') {
             return res.status(403).json({
                 success: false,
@@ -50,7 +54,6 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Compare password
         const isMatch = await bcrypt.compare(password, staff.password);
         if (!isMatch) {
             return res.status(401).json({
@@ -59,7 +62,6 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Generate JWT token using centralized shared secret
         const token = jwt.sign(
             {
                 id: staff.id,
@@ -68,23 +70,14 @@ router.post('/login', async (req, res) => {
                 role: staff.role,
                 name: staff.name
             },
-            JWT_SECRET, // ✅ Uses centralized secret key string
+            JWT_SECRET,
             { expiresIn: '7d' }
         );
 
-        // Cookie Configuration Attributes
-        const cookieOptions = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production', // false on localhost http, true on live https
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-        };
-
-        // ✅ Set matching cookies to bridge old and new code layers
+        const cookieOptions = getCookieOptions();
         res.cookie('auth_token', token, cookieOptions);
         res.cookie('token', token, cookieOptions);
 
-        // Return user data profile (excluding password)
         return res.status(200).json({
             success: true,
             message: "Login successful",
@@ -101,67 +94,62 @@ router.post('/login', async (req, res) => {
         console.error('Login routing exception:', error);
         return res.status(500).json({
             success: false,
-            message: "Internal server error",
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            message: "Internal server error"
         });
     }
 });
 
-// GET: /api/auth/profile
-router.get('/profile', (req, res) => {
-    const token = req.cookies.token;
+// GET: /api/auth/me (Session Check on Vue Page Refresh)
+router.get('/me', async (req, res) => {
+    const token = req.cookies?.auth_token || req.cookies?.token;
 
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
+    if (!token) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
     try {
         const verified = jwt.verify(token, JWT_SECRET);
-        res.json({ authorized: true, user: verified });
+
+        // Return verified decoded JWT payload to Vue store
+        return res.status(200).json({
+            success: true,
+            user: {
+                id: verified.id,
+                email: verified.email,
+                phone: verified.phone,
+                name: verified.name,
+                role: verified.role
+            }
+        });
     } catch (err) {
-        res.status(403).json({ message: "Invalid Token" });
+        return res.status(401).json({ success: false, message: "Invalid or expired token" });
     }
 });
 
-router.get('/me', (req, res) => {
-    const token = req.cookies.token;
-
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
-
-    try {
-        const verified = jwt.verify(token, JWT_SECRET);
-        res.json({ user: req.user });
-    } catch (err) {
-        res.status(403).json({ message: "Invalid Token" });
-    }
-});
-
+// POST: /api/auth/logout
 router.post('/logout', async (req, res) => {
     try {
-        // Cookie options must match the login flags (excluding maxAge/expires)
         const cookieOptions = {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'lax',
+            path: '/'
         };
 
-        // Clear both active cookie keys set during login
         res.clearCookie('auth_token', cookieOptions);
         res.clearCookie('token', cookieOptions);
 
-        // Standardized success response
         return res.status(200).json({
             success: true,
             message: "Logout successful"
         });
-
     } catch (error) {
         console.error('Logout routing exception:', error);
         return res.status(500).json({
             success: false,
-            message: "Internal server error",
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            message: "Internal server error"
         });
     }
 });
 
-// Export the router group
 export default router;

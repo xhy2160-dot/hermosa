@@ -1,48 +1,34 @@
-// middleware/auth.js
+//middleware/auth.js
+
 import jwt from 'jsonwebtoken';
 import { authConfig } from '../config/auth.js';
 
-// Resolve your secret key safely from environment variables
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Check if route is public
-const isPublicRoute = (url) => {
-    // Exact match
-    if (authConfig.publicRoutes?.includes(url)) {
-        return true;
-    }
+const isPublicRoute = (path) => {
+    if (authConfig?.publicRoutes?.includes(path)) return true;
+    if (authConfig?.publicRoutePrefixes?.some(prefix => path.startsWith(prefix))) return true;
+    if (authConfig?.staticExtensions?.some(ext => path.endsWith(ext))) return true;
 
-    // Prefix match
-    if (authConfig.publicRoutePrefixes?.some(prefix => url.startsWith(prefix))) {
-        return true;
-    }
-
-    // Static file extensions
-    if (authConfig.staticExtensions?.some(ext => url.endsWith(ext))) {
-        return true;
-    }
-
-    // Regex patterns for specific cases
     const patterns = [
-        /^\/api\/auth\/(login|register|refresh|forgot-password|reset-password|verify)/,
+        // Added 'me' and 'check' to allowed auth subroutes
+        /^\/api\/auth\/(login|register|refresh|forgot-password|reset-password|verify|me|check)/,
         /^\/api\/webhooks\//,
         /^\/api\/public\//,
         /\.(css|js|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|eot)$/i
     ];
 
-    return patterns.some(pattern => pattern.test(url));
+    return patterns.some(pattern => pattern.test(path));
 };
 
-// Get token from cookie or Authorization header
 export const authenticate = (req, res, next) => {
     try {
-        // Use req.path instead of req.url to drop query strings like ?customerId=123
         if (isPublicRoute(req.path)) {
             return next();
         }
 
-        // 🌟 CRITICAL: Make sure 'auth_token' matches the exact label issued on login!
-        const token = req.cookies.auth_token || req.cookies.token;
+        // Optional chaining prevents throwing TypeError if cookies are missing
+        const token = req.cookies?.auth_token || req.cookies?.token;
 
         if (!token) {
             return res.status(401).json({
@@ -52,16 +38,17 @@ export const authenticate = (req, res, next) => {
         }
 
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded; // Attach user payload to request profile
+        req.user = decoded;
         next();
     } catch (error) {
         console.error('JWT validation error:', error.message);
 
-        // Match the cookie key being cleared with what you are tracking above
-        res.clearCookie('auth_token');
-        res.clearCookie('token');
+        // Ensure path matches cookie creation settings
+        const cookieOptions = { path: '/', httpOnly: true };
+        res.clearCookie('auth_token', cookieOptions);
+        res.clearCookie('token', cookieOptions);
 
-        return res.status(403).json({
+        return res.status(401).json({
             success: false,
             message: 'Invalid or expired token.'
         });
