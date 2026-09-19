@@ -106,7 +106,6 @@ router.get('/me', async (req, res) => {
     if (!token) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
     }
-
     try {
         const verified = jwt.verify(token, JWT_SECRET);
 

@@ -642,4 +642,59 @@ router.get('/get-records-by-customerId', async (req, res) => {
         return res.status(500).json({ error: err.message || 'Failed to fetch record' });
     }
 });
+
+router.get('/get-all-by-page', async (req, res) => {
+    try {
+        console.log('Received query parameters:', req.query);
+        // 1. Parse and sanitize query parameters with defaults
+        const page = Math.max(1, parseInt(req.query.currentPage, 10) || 1);
+        const pageSize = 10; // Cap at 100 max items
+        const offset = (page - 1) * pageSize;
+
+        // Allowed sort fields to prevent SQL injection or bad column errors
+        const allowedSortFields = ['name', 'created_at', 'updated_at', 'id'];
+        const sortBy = allowedSortFields.includes(req.query.sortBy) ? req.query.sortBy : 'created_at';
+        const sortOrder = req.query.sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+        // 2. Query total count and paginated records in a single query
+        const { count, rows: customers } = await Customer.findAndCountAll({
+            limit: pageSize,
+            offset: offset,
+            order: [[sortBy, sortOrder]],
+        });
+
+        // 3. Return payload with pagination metadata
+        const totalPages = Math.ceil(count / pageSize);
+
+        const from = count === 0 ? 0 : offset + 1;
+        const to = Math.min(offset + pageSize, count);
+
+        return res.success(
+            {
+                data: customers,
+                pagination: {
+                    totalItems: count,
+                    totalPages,
+                    currentPage: page,
+                    pageSize,
+                    from,
+                    to,
+                    hasNextPage: page < totalPages,
+                    hasPrevPage: page > 1,
+                }
+            },
+            'success',
+            200
+        );
+    } catch (error) {
+        console.error('Error fetching paginated customers:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to retrieve customers',
+            error: error.message,
+        });
+    }
+});
+
+
 export default router;
