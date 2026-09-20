@@ -608,6 +608,12 @@ router.post('/save-cell-edit', authenticate, async (req, res) => {
             });
         }
 
+        const customer = await Customer.findByPk(customer_id);
+        if (customer) {
+            await customer.changed('updated_at', true);
+            await customer.save();
+        }
+
         return res.success(
             { saved: true, recordId: record.id, customerId: customer_id },
             created ? 'Workbook record created successfully' : 'Workbook updated successfully',
