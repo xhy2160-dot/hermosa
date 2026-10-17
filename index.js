@@ -29,6 +29,18 @@ const __dirname = path.dirname(__filename);
 app.disable('etag');
 
 // CORS Configuration
+
+app.use((req, res, next) => {
+    console.log({
+        method: req.method,
+        url: req.originalUrl,
+        origin: req.headers.origin,
+        referer: req.headers.referer,
+    });
+
+    next();
+});
+
 const allowedOrigins = [
     'http://localhost:5173',
     'https://xoxy.cc',
