@@ -5,6 +5,7 @@ import db from '../models/index.js';
 const { sequelize, Customer, CustomerRecord } = db;
 import { authenticate } from '../middleware/auth.js';
 import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
+import { extractWorkbookRows, scoreCustomer } from '../utils/workbookSearch.js';
 
 const router = express.Router();
 
@@ -159,6 +160,111 @@ router.put('/update', authenticate, async (req, res) => {
     } catch (error) {
         console.error('Error updating customer:', error);
         res.fail('Failed to update customer', 500)
+    }
+});
+// ============================================
+// GET /api/customers/global-search?q=<keyword>
+// Global search: name, email, phone AND workbook content.
+// Returns the 10 most relevant customers. A result carries a snippet of the
+// workbook row that contains the keyword when the workbook matched.
+// ============================================
+router.get('/global-search', async (req, res) => {
+    try {
+        const keyword = String(req.query.q ?? req.query.keyword ?? req.query.query ?? '')
+            .trim().replace(/\s+/g, ' ');
+        if (!keyword) {
+            return res.fail('Search keyword is required', 400);
+        }
+        if (keyword.length > 100) {
+            return res.fail('Search keyword is too long', 400);
+        }
+
+        const like = `%${keyword}%`;
+        const terms = [...new Set(keyword.toLowerCase().split(' ').filter(Boolean))];
+        const digits = keyword.replace(/\D/g, '');
+        const customerAttrs = ['id', 'name', 'email', 'phone', 'status', 'created_at', 'updated_at'];
+
+        // 1. Candidates whose name / email / phone match the keyword (or, for
+        //    a multi-word keyword, any single term — relevance sorting below
+        //    decides which of these actually belong in the top 10).
+        const fieldOr = [
+            { name: { [Op.like]: like } },
+            { email: { [Op.like]: like } },
+            { phone: { [Op.like]: like } },
+        ];
+        if (digits.length >= 3) fieldOr.push({ phone: { [Op.like]: `%${digits}%` } });
+        for (const term of terms) {
+            if (term === keyword.toLowerCase()) continue;
+            fieldOr.push(
+                { name: { [Op.like]: `%${term}%` } },
+                { email: { [Op.like]: `%${term}%` } },
+                { phone: { [Op.like]: `%${term}%` } },
+            );
+        }
+        const fieldMatches = await Customer.findAll({
+            where: { [Op.or]: fieldOr },
+            attributes: customerAttrs,
+            limit: 200,
+        });
+
+        // 2. Candidates whose workbook (records.workbook, Univer JSON text)
+        //    contains the keyword.
+        const workbookOr = [{ workbook: { [Op.like]: like } }];
+        if (digits.length >= 3) workbookOr.push({ workbook: { [Op.like]: `%${digits}%` } });
+        for (const term of terms) {
+            if (term === keyword.toLowerCase()) continue;
+            workbookOr.push({ workbook: { [Op.like]: `%${term}%` } });
+        }
+        const recordMatches = await CustomerRecord.findAll({
+            where: { [Op.or]: workbookOr },
+            attributes: ['customerId'],
+            limit: 200,
+        });
+        const workbookCustomerIds = [...new Set(recordMatches.map((r) => r.customerId))];
+        const missingIds = workbookCustomerIds.filter((id) => !fieldMatches.some((c) => c.id === id));
+        const workbookMatches = missingIds.length
+            ? await Customer.findAll({ where: { id: { [Op.in]: missingIds } }, attributes: customerAttrs })
+            : [];
+
+        const candidates = [...fieldMatches, ...workbookMatches];
+        if (!candidates.length) {
+            return res.success({ keyword, total: 0, results: [] }, 'Search completed', 200);
+        }
+
+        // 3. Load the candidates' workbooks, score every candidate, keep top 10.
+        const records = await CustomerRecord.findAll({
+            where: { customerId: { [Op.in]: candidates.map((c) => c.id) } },
+            attributes: ['customerId', 'workbook'],
+        });
+        const workbookByCustomer = new Map(records.map((r) => [r.customerId, r.workbook]));
+
+        const results = candidates
+            .map((c) => {
+                const plain = c.get({ plain: true });
+                const rows = extractWorkbookRows(workbookByCustomer.get(c.id));
+                const scored = scoreCustomer(plain, keyword, rows);
+                return {
+                    ...plain,
+                    score: scored.score,
+                    matchedIn: scored.matchedIn,
+                    workbookMatchCount: scored.workbookMatchCount,
+                    workbookSnippet: scored.snippet?.text ?? null,
+                    workbookSheet: scored.snippet?.sheetName ?? null,
+                    workbookRow: scored.snippet?.rowIndex ?? null,
+                };
+            })
+            .filter((r) => r.score > 0)
+            .sort((a, b) =>
+                b.score - a.score ||
+                new Date(b.updated_at) - new Date(a.updated_at) ||
+                String(a.name).localeCompare(String(b.name))
+            )
+            .slice(0, 10);
+
+        return res.success({ keyword, total: results.length, results }, 'Search completed', 200);
+    } catch (error) {
+        console.error('Error in global search:', error);
+        return res.fail('Failed to search customers', 500);
     }
 });
 // ============================================
