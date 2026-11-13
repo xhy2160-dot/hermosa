@@ -1,16 +1,16 @@
 // utils/workbookSearch.js
-// Helpers for the global customer search (GET /api/customers/global-search).
+// Helpers for the workbook keyword search (GET /api/customers/global-search).
 //
 // A customer's workbook is a Univer IWorkbookData JSON object stored in
 // records.workbook:
 //   { sheets: { <sheetId>: { name, cellData: { <row>: { <col>: { v, m, p } } } } },
 //     sheetOrder: [<sheetId>, ...] }
 //
-// These helpers turn that structure into searchable plain-text rows, score a
-// customer against a keyword, and build a short snippet around a workbook hit.
-
-const MAX_SNIPPET_BEFORE = 70;
-const MAX_SNIPPET_AFTER = 110;
+// The search counts how many times a keyword (e.g. a treatment name such as
+// "botox") occurs in the *extracted cell text* of a workbook — never in the
+// raw JSON keys/structure. These helpers only turn one workbook at a time
+// into plain-text rows and count occurrences in those rows, so callers can
+// page through records in small batches and keep memory bounded.
 
 /** Count non-overlapping occurrences of needle in haystack (both pre-lowercased). */
 export function countOccurrences(haystack, needle) {
@@ -93,103 +93,25 @@ export function extractWorkbookRows(workbook) {
     return rows;
 }
 
-/** Build a windowed snippet of `text` around the first keyword/term hit. */
-export function buildSnippet(text, keyword, terms = []) {
-    if (!text) return text;
-    const lower = text.toLowerCase();
-    let idx = lower.indexOf(keyword);
-    let hitLength = keyword.length;
-    if (idx === -1) {
-        for (const term of terms) {
-            idx = lower.indexOf(term);
-            if (idx !== -1) { hitLength = term.length; break; }
-        }
-    }
-    if (idx === -1) return text.length > 180 ? `${text.slice(0, 180)}…` : text;
-
-    const start = Math.max(0, idx - MAX_SNIPPET_BEFORE);
-    const end = Math.min(text.length, idx + hitLength + MAX_SNIPPET_AFTER);
-    return `${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`;
-}
-
-function fieldScore(value, keyword, terms, { exact, startsWith, contains }) {
-    if (!value) return 0;
-    const v = String(value).toLowerCase();
-    if (v === keyword) return exact;
-    if (v.startsWith(keyword)) return startsWith;
-    if (v.includes(keyword)) return contains;
-    // Multi-word keyword: partial credit when every term appears in the field.
-    if (terms.length > 1 && terms.every((t) => v.includes(t))) return Math.round(contains * 0.8);
-    if (terms.length > 1 && terms.some((t) => v.includes(t))) return Math.round(contains * 0.4);
-    return 0;
-}
-
 /**
- * Score one customer against a keyword.
- * @param {{name?, email?, phone?}} customer
+ * Count how many times a keyword occurs in one workbook's extracted text.
+ *
+ * The keyword is matched as a full phrase (multi-word keywords count phrase
+ * occurrences only), case-insensitively, summed over the workbook's rows.
+ * Counting is per row — the same rule the original search used — so a phrase
+ * split across two cells/rows by the ' | ' row join is not counted.
+ *
+ * @param {*} workbook - parsed object, JSON string, or plain string/null
  * @param {string} keywordRaw - the raw user keyword (any case)
- * @param {Array} rows - output of extractWorkbookRows()
- * @returns {{score:number, matchedIn:string[], workbookMatchCount:number,
- *            snippet:{text:string, sheetName:string|null, rowIndex:number}|null}}
+ * @returns {number} total occurrences of the keyword in the workbook text
  */
-export function scoreCustomer(customer, keywordRaw, rows = []) {
+export function countWorkbookMatches(workbook, keywordRaw) {
     const keyword = String(keywordRaw || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    if (!keyword) return { score: 0, matchedIn: [], workbookMatchCount: 0, snippet: null };
-    const terms = [...new Set(keyword.split(' ').filter(Boolean))];
-    const digits = keyword.replace(/\D/g, '');
+    if (!keyword) return 0;
 
-    let score = 0;
-    const matchedIn = [];
-
-    const nameScore = fieldScore(customer.name, keyword, terms, { exact: 100, startsWith: 65, contains: 45 });
-    if (nameScore) { score += nameScore; matchedIn.push('name'); }
-
-    const emailScore = fieldScore(customer.email, keyword, terms, { exact: 95, startsWith: 55, contains: 38 });
-    if (emailScore) { score += emailScore; matchedIn.push('email'); }
-
-    // Phone: stored as +1XXXXXXXXXX, so compare on digits as well as raw text
-    // (a typed "(647) 987-5030" or "647987" should still match).
-    let phoneScore = fieldScore(customer.phone, keyword, terms, { exact: 95, startsWith: 55, contains: 38 });
-    if (digits.length >= 3 && customer.phone) {
-        const phoneDigits = String(customer.phone).replace(/\D/g, '');
-        if (phoneDigits === digits || phoneDigits === `1${digits}`) phoneScore = Math.max(phoneScore, 95);
-        else if (phoneDigits.includes(digits)) phoneScore = Math.max(phoneScore, 42);
+    let total = 0;
+    for (const row of extractWorkbookRows(workbook)) {
+        total += countOccurrences(row.text.toLowerCase(), keyword);
     }
-    if (phoneScore) { score += phoneScore; matchedIn.push('phone'); }
-
-    // Workbook content
-    let workbookMatchCount = 0;
-    let bestRow = null;
-    let bestRowScore = 0;
-    for (const row of rows) {
-        const rowLower = row.text.toLowerCase();
-        const phraseHits = countOccurrences(rowLower, keyword);
-        let hits = phraseHits;
-        if (!phraseHits && terms.length > 1) {
-            hits = terms.reduce((sum, t) => sum + countOccurrences(rowLower, t), 0);
-        }
-        if (hits > 0) {
-            workbookMatchCount += hits;
-            const rowScore = phraseHits * 3 + hits; // phrase rows rank above scattered term rows
-            if (rowScore > bestRowScore) { bestRowScore = rowScore; bestRow = row; }
-        }
-    }
-    if (workbookMatchCount > 0) {
-        // First hit matters most; repeated hits add up but are capped so a
-        // workbook with many hits cannot bury an exact name/email/phone match.
-        score += Math.min(10 + (workbookMatchCount - 1) * 4, 50);
-        if (terms.length > 1 && bestRow && terms.every((t) => bestRow.text.toLowerCase().includes(t))) {
-            score += 5;
-        }
-        matchedIn.push('workbook');
-    }
-
-    return {
-        score,
-        matchedIn,
-        workbookMatchCount,
-        snippet: bestRow
-            ? { text: buildSnippet(bestRow.text, keyword, terms), sheetName: bestRow.sheetName, rowIndex: bestRow.rowIndex }
-            : null,
-    };
+    return total;
 }

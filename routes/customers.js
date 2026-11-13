@@ -5,7 +5,7 @@ import db from '../models/index.js';
 const { sequelize, Customer, CustomerRecord } = db;
 import { authenticate } from '../middleware/auth.js';
 import { formatNAPhoneNumber } from '../utils/formatPhoneNo.js';
-import { extractWorkbookRows, scoreCustomer } from '../utils/workbookSearch.js';
+import { countWorkbookMatches } from '../utils/workbookSearch.js';
 
 const router = express.Router();
 
@@ -164,9 +164,20 @@ router.put('/update', authenticate, async (req, res) => {
 });
 // ============================================
 // GET /api/customers/global-search?q=<keyword>
-// Global search: name, email, phone AND workbook content.
-// Returns the 10 most relevant customers. A result carries a snippet of the
-// workbook row that contains the keyword when the workbook matched.
+// Workbook keyword search: counts how many times the keyword occurs in
+// each customer's workbook (extracted cell text only) and returns one
+// page of the customers with the most occurrences — e.g. for a
+// treatment name like "botox", the customers who had that treatment
+// most often. Query params: q (required), page (default 1), pageSize
+// (default 10, max 50). `total` in the response is the number of
+// matching customers across all pages.
+//
+// Memory-bounded: records are paged through in small batches by id and
+// each workbook is counted and discarded before the next batch loads, so
+// peak memory depends on the batch size, not on how many customers
+// exist. Only a running count per matching customer (numbers in a Map)
+// is kept across batches; customer details are fetched once, for the
+// current page only. Name / email / phone are NOT searched.
 // ============================================
 router.get('/global-search', async (req, res) => {
     try {
@@ -179,89 +190,66 @@ router.get('/global-search', async (req, res) => {
             return res.fail('Search keyword is too long', 400);
         }
 
-        const like = `%${keyword}%`;
-        const terms = [...new Set(keyword.toLowerCase().split(' ').filter(Boolean))];
-        const digits = keyword.replace(/\D/g, '');
-        const customerAttrs = ['id', 'name', 'email', 'phone', 'status', 'created_at', 'updated_at'];
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize, 10) || 10));
 
-        // 1. Candidates whose name / email / phone match the keyword (or, for
-        //    a multi-word keyword, any single term — relevance sorting below
-        //    decides which of these actually belong in the top 10).
-        const fieldOr = [
-            { name: { [Op.like]: like } },
-            { email: { [Op.like]: like } },
-            { phone: { [Op.like]: like } },
-        ];
-        if (digits.length >= 3) fieldOr.push({ phone: { [Op.like]: `%${digits}%` } });
-        for (const term of terms) {
-            if (term === keyword.toLowerCase()) continue;
-            fieldOr.push(
-                { name: { [Op.like]: `%${term}%` } },
-                { email: { [Op.like]: `%${term}%` } },
-                { phone: { [Op.like]: `%${term}%` } },
-            );
-        }
-        const fieldMatches = await Customer.findAll({
-            where: { [Op.or]: fieldOr },
-            attributes: customerAttrs,
-            limit: 200,
-        });
+        const BATCH_SIZE = 25;
+        const matchCountByCustomer = new Map(); // customerId -> occurrence count
+        let lastRecordId = 0;
 
-        // 2. Candidates whose workbook (records.workbook, Univer JSON text)
-        //    contains the keyword.
-        const workbookOr = [{ workbook: { [Op.like]: like } }];
-        if (digits.length >= 3) workbookOr.push({ workbook: { [Op.like]: `%${digits}%` } });
-        for (const term of terms) {
-            if (term === keyword.toLowerCase()) continue;
-            workbookOr.push({ workbook: { [Op.like]: `%${term}%` } });
-        }
-        const recordMatches = await CustomerRecord.findAll({
-            where: { [Op.or]: workbookOr },
-            attributes: ['customerId'],
-            limit: 200,
-        });
-        const workbookCustomerIds = [...new Set(recordMatches.map((r) => r.customerId))];
-        const missingIds = workbookCustomerIds.filter((id) => !fieldMatches.some((c) => c.id === id));
-        const workbookMatches = missingIds.length
-            ? await Customer.findAll({ where: { id: { [Op.in]: missingIds } }, attributes: customerAttrs })
-            : [];
+        // Page through every record in id order, one small batch at a time.
+        for (;;) {
+            const batch = await CustomerRecord.findAll({
+                where: { id: { [Op.gt]: lastRecordId } },
+                attributes: ['id', 'customerId', 'workbook'],
+                order: [['id', 'ASC']],
+                limit: BATCH_SIZE,
+            });
+            if (!batch.length) break;
 
-        const candidates = [...fieldMatches, ...workbookMatches];
-        if (!candidates.length) {
-            return res.success({ keyword, total: 0, results: [] }, 'Search completed', 200);
+            for (const record of batch) {
+                lastRecordId = record.id;
+                const count = countWorkbookMatches(record.workbook, keyword);
+                if (count > 0) {
+                    matchCountByCustomer.set(
+                        record.customerId,
+                        (matchCountByCustomer.get(record.customerId) || 0) + count
+                    );
+                }
+            }
+            // `batch` (the only place workbook JSON lives) goes out of scope
+            // here and is released before the next batch is fetched.
+            if (batch.length < BATCH_SIZE) break;
         }
 
-        // 3. Load the candidates' workbooks, score every candidate, keep top 10.
-        const records = await CustomerRecord.findAll({
-            where: { customerId: { [Op.in]: candidates.map((c) => c.id) } },
-            attributes: ['customerId', 'workbook'],
+        if (!matchCountByCustomer.size) {
+            return res.success({ keyword, total: 0, page, pageSize, results: [] }, 'Search completed', 200);
+        }
+
+        // Rank by occurrence count, most first; customer id breaks ties so
+        // the ordering is stable between calls. Ranking and slicing work
+        // on the counts map only — no workbook data is held here.
+        const ranked = [...matchCountByCustomer.entries()]
+            .map(([customerId, workbookMatchCount]) => ({ customerId, workbookMatchCount }))
+            .sort((a, b) => b.workbookMatchCount - a.workbookMatchCount || a.customerId - b.customerId);
+        const total = ranked.length;
+        const top = ranked.slice((page - 1) * pageSize, page * pageSize);
+
+        // Fetch name / phone / email for this page only.
+        const customers = await Customer.findAll({
+            where: { id: { [Op.in]: top.map((t) => t.customerId) } },
+            attributes: ['id', 'name', 'email', 'phone'],
         });
-        const workbookByCustomer = new Map(records.map((r) => [r.customerId, r.workbook]));
+        const customerById = new Map(customers.map((c) => [c.id, c.get({ plain: true })]));
 
-        const results = candidates
-            .map((c) => {
-                const plain = c.get({ plain: true });
-                const rows = extractWorkbookRows(workbookByCustomer.get(c.id));
-                const scored = scoreCustomer(plain, keyword, rows);
-                return {
-                    ...plain,
-                    score: scored.score,
-                    matchedIn: scored.matchedIn,
-                    workbookMatchCount: scored.workbookMatchCount,
-                    workbookSnippet: scored.snippet?.text ?? null,
-                    workbookSheet: scored.snippet?.sheetName ?? null,
-                    workbookRow: scored.snippet?.rowIndex ?? null,
-                };
-            })
-            .filter((r) => r.score > 0)
-            .sort((a, b) =>
-                b.score - a.score ||
-                new Date(b.updated_at) - new Date(a.updated_at) ||
-                String(a.name).localeCompare(String(b.name))
-            )
-            .slice(0, 10);
+        const results = top
+            .filter((t) => customerById.has(t.customerId))
+            .map((t) => ({
+                ...customerById.get(t.customerId),
+                workbookMatchCount: t.workbookMatchCount,
+            }));
 
-        return res.success({ keyword, total: results.length, results }, 'Search completed', 200);
+        return res.success({ keyword, total, page, pageSize, results }, 'Search completed', 200);
     } catch (error) {
         console.error('Error in global search:', error);
         return res.fail('Failed to search customers', 500);
